@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saltwater Aquarium Simulator - Complete Learning System</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+    <!-- Welcome Screen -->
+    <div id="welcomeScreen" class="welcome-screen">
+        <div class="welcome-content">
+            <h1>Saltwater Aquarium Simulator</h1>
+            <p style="margin-bottom:24px; color:var(--text-secondary);">Select a starting scenario to begin your aquatic
+                journey.</p>
+
+            <div class="quick-start-card">
+                <div class="quick-start-title">Quick Start</div>
+                <ul class="quick-start-list">
+                    <li>Buy your tank, stand, substrate, live rock, salt mix, heater, powerhead, protein skimmer, and test kit.</li>
+                    <li>Mix saltwater to 35 ppt, then start the nitrogen cycle.</li>
+                    <li>Test ammonia, nitrite, and nitrate daily until the cycle finishes.</li>
+                    <li>Use the Ghost Feed option during cycling to supply ammonia without adding fish.</li>
+                    <li>Only add fish after ammonia and nitrite read 0 ppm and nitrate is present.</li>
+                </ul>
+            </div>
+
+            <div class="welcome-actions">
+                        <button id="profileBtn" class="action-btn primary">👤 Manage Profiles</button>
+        <button id="resetBtn" class="action-btn secondary" style="display:none;">Reset Game</button>
+        <button id="resumeButton" class="action-btn secondary" onclick="resumeActiveProfile()" style="display:none;">▶ Resume Saved Tank</button>
+        <div id="welcomeProfileInfo" class="profile-note">Current profile: Guest</div>
+            </div>
+
+            <div class="tank-option" onclick="startGame('nano')">
+                <h3>Nano Reef (20 Gallons)</h3>
+                <p>A small, challenging setup. Parameters fluctuate quickly. Perfect for learning water chemistry
+                    stability.</p>
+                <div class="tank-specs">
+                    <span>💰 $1500 Budget</span>
+                    <span>🌡️ Volatile</span>
+                </div>
+            </div>
+
+            <div class="tank-option" onclick="startGame('medium')">
+                <h3>Standard Reef Tank (55 Gallons) <span class="recommended-badge">Recommended</span></h3>
+                <p>The classic starter size. Forgiving enough for beginners, large enough for diverse livestock.</p>
+                <div class="tank-specs">
+                    <span>💰 $5,000 Budget</span>
+                    <span>🌡️ Stable</span>
+                </div>
+            </div>
+
+            <div class="tank-option" onclick="startGame('large')">
+                <h3>Large Mixed Reef (120 Gallons)</h3>
+                <p>Massive volume. Expensive to set up and maintain, but offers unparalleled stability and stocking
+                    options.</p>
+                <div class="tank-specs">
+                    <span>💰 $8,000 Budget</span>
+                    <span>🌡️ Highly Stable</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Navigation -->
+    <nav id="topNav" class="top-nav" style="display:none;">
+        <div class="logo"><span>🌊</span> ReefSim <span
+                style="color:var(--text-secondary); font-size:0.8rem; letter-spacing:1px; margin-left:10px;">v2.0</span>
+        </div>
+        <div class="sim-controls">
+            <div id="profileDisplay" class="profile-chip">Profile: Guest</div>
+            <button class="action-btn" onclick="showProfileModal()">👤 Profile</button>
+            <div id="timeDisplay" class="time-display">Day 0 - 12:00 PM</div>
+            <div id="budgetDisplay" class="budget-display">💰 $0</div>
+            <div id="saveStatus" class="save-status">Unsaved</div>
+            <button class="action-btn" onclick="showTestKitModal()">🧪 Test Water</button>
+            <div style="width:1px; height:20px; background:var(--panel-border); margin:0 8px;"></div>
+            <button class="speed-btn active" id="speed1" onclick="setSpeed(1)">1x</button>
+            <button class="speed-btn" id="speed5" onclick="setSpeed(5)">5x</button>
+            <button class="speed-btn" id="speed20" onclick="setSpeed(20)">20x</button>
+            <button class="action-btn" id="pauseBtn" onclick="togglePause()">⏸</button>
+        </div>
+    </nav>
+
+    <!-- Main Layout -->
+    <main id="mainLayout" class="main-layout" style="display:none;">
+
+        <!-- Left Panel: Status & Params -->
+        <aside class="glass-panel">
+            <div class="panel-header" onclick="toggleSection(this)">
+                <span>📊 Water Parameters</span>
+                <span>▼</span>
+            </div>
+            <div class="panel-content" id="waterParamsPanel">
+                <!-- Grouped Parameters will be rendered here by JS -->
+            </div>
+
+            <div class="panel-header" style="border-top:1px solid var(--panel-border)" onclick="toggleSection(this)">
+                <span>⚙️ Equipment</span>
+                <span>▼</span>
+            </div>
+            <div class="panel-content" id="equipmentPanel">
+                <!-- Equipment toggles rendered here -->
+            </div>
+
+            <div class="panel-header" style="border-top:1px solid var(--panel-border)" onclick="toggleSection(this)">
+                <span>� Maintenance</span>
+                <span>▼</span>
+            </div>
+            <div class="panel-content" id="maintenancePanel">
+                <!-- Maintenance actions rendered here -->
+            </div>
+
+            <div class="panel-header" style="border-top:1px solid var(--panel-border)" onclick="toggleSection(this)">
+                <span>💲 Real Costs</span>
+                <span>▼</span>
+            </div>
+            <div class="panel-content" id="realCostsPanel">
+                <!-- Real-world cost estimates rendered here -->
+            </div>
+
+            <div class="panel-header" style="border-top:1px solid var(--panel-border)" onclick="toggleSection(this)">
+                <span>�📈 Progress</span>
+                <span>▼</span>
+            </div>
+            <div class="panel-content">
+                <div class="timeline" id="phaseTimeline">
+                    <!-- Timeline rendered here -->
+                </div>
+
+                <!-- Nitrogen Cycle SVG Diagram (hidden post-cycle) -->
+                <div id="cycleDiagramContainer" style="display:none; margin-top:20px; text-align:center;">
+                    <div
+                        style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; margin-bottom:10px; font-weight:700;">
+                        The Nitrogen Cycle</div>
+                    <svg class="cycle-diagram" viewBox="0 0 200 120">
+                        <!-- Ammonia Box -->
+                        <rect x="10" y="40" width="45" height="30" rx="4" class="cycle-box danger" id="svgAmmoniaBox" />
+                        <text x="32.5" y="58" text-anchor="middle" class="cycle-text">NH3</text>
+                        <!-- Arrow 1 -->
+                        <path d="M55,55 L80,55" class="cycle-line" />
+                        <polygon points="80,55 75,52 75,58" class="cycle-arrow" />
+                        <!-- Nitrite Box -->
+                        <rect x="80" y="40" width="45" height="30" rx="4" class="cycle-box warning"
+                            id="svgNitriteBox" />
+                        <text x="102.5" y="58" text-anchor="middle" class="cycle-text">NO2</text>
+                        <!-- Arrow 2 -->
+                        <path d="M125,55 L150,55" class="cycle-line" />
+                        <polygon points="150,55 145,52 145,58" class="cycle-arrow" />
+                        <!-- Nitrate Box -->
+                        <rect x="150" y="40" width="45" height="30" rx="4" class="cycle-box safe" id="svgNitrateBox" />
+                        <text x="172.5" y="58" text-anchor="middle" class="cycle-text">NO3</text>
+                    </svg>
+                    <div id="cycleGuidance"
+                        style="font-size:0.75rem; color:var(--accent-cyan); margin-top:10px; font-style:italic;">Add a
+                        source of ammonia to begin.</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Center Panel: 3D Canvas -->
+        <section class="center-panel">
+            <div class="tank-hud" id="tankHud">
+                <!-- Badges rendered by JS -->
+            </div>
+            <!-- ThreeJS Target -->
+            <div id="tank3D"></div>
+        </section>
+
+        <!-- Right Panel: Tabs -->
+        <aside class="glass-panel" style="display:flex; flex-direction:column;">
+            <div class="right-tabs">
+                <div class="right-tab active" onclick="switchRightTab('store')">Store</div>
+                <div class="right-tab" onclick="switchRightTab('livestock')">Livestock</div>
+                <div class="right-tab" onclick="switchRightTab('journal')">Journal</div>
+                <div class="right-tab" onclick="switchRightTab('knowledge')">Knowledge</div>
+            </div>
+
+            <!-- Tab Contents -->
+            <div class="panel-content tab-panel active" id="tab-store" style="flex:1; overflow-y:auto; padding:0;">
+            </div>
+            <div class="panel-content tab-panel" id="tab-livestock" style="flex:1; overflow-y:auto; padding:0;"></div>
+            <div class="panel-content tab-panel" id="tab-journal" style="flex:1; overflow-y:auto;"></div>
+            <div class="panel-content tab-panel" id="tab-knowledge" style="flex:1; overflow-y:auto; padding:0;"></div>
+        </aside>
+
+    </main>
+
+    <!-- Global Alert Banner -->
+    <div id="alertBanner" class="alert-banner" onclick="dismissAlert()"></div>
+
+    <!-- Feeding Indicator -->
+    <div id="feedingIndicator" class="feeding-indicator"></div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Generic Modal -->
+    <div id="modalOverlay" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="modalTitle">Title</h2>
+                <button class="modal-close" onclick="closeModal()">×</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-actions" id="modalActions"></div>
+        </div>
+    </div>
+
+    <!-- Application Script (OOP Architecture & 3D Realism Engine) -->
+    <script src="bundle.js"></script>
+
+</body>
+
+</html>
