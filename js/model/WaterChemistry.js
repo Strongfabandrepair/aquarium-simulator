@@ -56,12 +56,13 @@ export class WaterChemistry {
                 w.nitrate += no2Conversion * 0.9;
             }
 
-            // Cycle Completion criteria
+            // Completion measures maturation and ammonia/nitrite clearance.
+            // Nitrate is an exported byproduct: skimmers, macroalgae and water
+            // changes can remove it without undoing the simulated biofilter.
             if (
                 state.cycleDay >= 12 &&
                 w.ammonia < 0.1 &&
                 w.nitrite < 0.15 &&
-                w.nitrate > 1.5 &&
                 state.ghostFedForCycle
             ) {
                 state.cycleComplete = true;

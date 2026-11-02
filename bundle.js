@@ -448,7 +448,7 @@
           w.nitrite = Math.max(0, w.nitrite - no2Conversion);
           w.nitrate += no2Conversion * 0.9;
         }
-        if (state.cycleDay >= 12 && w.ammonia < 0.1 && w.nitrite < 0.15 && w.nitrate > 1.5 && state.ghostFedForCycle) {
+        if (state.cycleDay >= 12 && w.ammonia < 0.1 && w.nitrite < 0.15 && state.ghostFedForCycle) {
           state.cycleComplete = true;
           state.phase = Math.max(state.phase, 2);
           state.journal.push({

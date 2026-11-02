@@ -24,3 +24,7 @@ Build and lint passed. All 34 unit tests passed. All 22 Chromium browser scenari
 Run `npm run build`, `npm test`, `npm run lint`, and `npm run test:ui`. The smoke additions live in `tests/smoke*.spec.js` and `tests/SmokeSimulation.test.js`; existing wildlife gallery and regression checks remain part of the suite.
 
 This verifies the tested Chromium flows and numerical assertions, not every possible save file, browser engine, GPU, or long-running population configuration. Optional OmniRoute is a separate development tool and was not started or changed by this app smoke test. Its previously documented dependency audit findings remain.
+
+## Follow-up: cycling with nutrient export
+
+The original fresh-start smoke case did not combine a skimmer with macroalgae. That combination exposed an incorrect minimum-nitrate requirement for completion. Completion now depends on the existing simulated cycle age (at least 12 days), ghost-feeding history, ammonia below 0.1 ppm, and nitrite below 0.15 ppm, irrespective of remaining nitrate. Existing stalled saves recover on their next unpaused tick without resetting progress. Added nine unit regressions covering filtration combinations, saved-tank recovery, premature completion guards, purchase eligibility and a single completion journal entry, plus a browser test that resumes a stalled save and purchases a clownfish.
