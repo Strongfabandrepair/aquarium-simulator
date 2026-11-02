@@ -1038,7 +1038,7 @@ button, .btn, .speed-btn, .action-btn, .maint-btn {
     background: rgba(4, 9, 20, 0.82);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
-    z-index: 10000;
+    z-index: 11000;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1195,4 +1195,14 @@ button, .btn, .speed-btn, .action-btn, .maint-btn {
 @keyframes fadeOut {
     0%   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
     100% { opacity: 0; transform: translate(-50%, -80%) scale(1.4); }
+}
+
+/* Keep the aquarium and controls usable on tablets and phones. */
+@media (max-width: 1050px) {
+    .top-nav { flex-wrap: wrap; padding: 10px 12px; }
+    .sim-controls { flex-wrap: wrap; gap: 8px; }
+    .main-layout { grid-template-columns: minmax(0, 1fr); height: auto; padding: 12px; }
+    .center-panel { grid-row: 1; height: 50vh; min-height: 320px; }
+    .glass-panel { max-height: 65vh; min-width: 0; overflow-y: auto; }
+    .welcome-screen { align-items: flex-start; }
 }

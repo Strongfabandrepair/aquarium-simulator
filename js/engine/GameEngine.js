@@ -78,6 +78,19 @@ export class GameEngine {
         // Start independent render loop at display refresh rate
         this._startRenderLoop();
 
+        this._autosaveTimer = setInterval(() => {
+            if (
+                this.state.started &&
+                this.state.autosaveSeconds > 0 &&
+                Date.now() - (this.state.lastSaved || 0) >=
+                    this.state.autosaveSeconds * 1000
+            )
+                this.save();
+        }, 1000);
+        window.addEventListener('beforeunload', () => {
+            if (this.state.started) this.save();
+        });
+
         // Initial render
         this.render();
 
@@ -197,8 +210,14 @@ export class GameEngine {
         } else if (itemId === 'saltMix') {
             this.state.equipment.saltMix =
                 (this.state.equipment.saltMix || 0) + 160;
-            if (this.state.equipment.tank && this.state.water.salinity < 34) {
-                this.state.water.salinity = 10; // Start mixing salinity
+            if (
+                this.state.equipment.tank &&
+                this.state.water.salinity < 34 &&
+                this.state.livestock.length === 0 &&
+                this.state.corals.length === 0
+            ) {
+                this.state.water.salinity = 10;
+                this.state.saltMixing = true;
                 journalText = `🧂 Added salt mix and began mixing! Salinity will gradually reach 35 ppt.`;
                 journalTip = `In real life, mix salt in a separate container for 24 hours. NEVER add dry salt directly to a tank with livestock.`;
                 this.readKnowledge('salinity');
@@ -662,6 +681,7 @@ export class GameEngine {
     }
 
     showModal(title, content, onShowCallback = null) {
+        document.getElementById('modalActions').innerHTML = '';
         document.getElementById('modalTitle').textContent = title;
         document.getElementById('modalBody').innerHTML = content;
         if (onShowCallback) onShowCallback();
@@ -672,7 +692,10 @@ export class GameEngine {
 
     save() {
         const profiles = GameState.getSavedProfiles();
+        this.state.lastSaved = Date.now();
         profiles[this.state.profileName] = this.state;
+        const status = document.getElementById('saveStatus');
+        if (status) status.textContent = 'Saved';
         GameState.saveProfiles(profiles);
         GameState.setActiveProfileName(this.state.profileName);
     }
@@ -685,6 +708,7 @@ export class GameEngine {
             this.gameState.reset(size, profileName);
             this.state.started = true;
             this.startLoop();
+            this.save();
             document.getElementById('welcomeScreen').style.display = 'none';
             document.getElementById('topNav').style.display = 'flex';
             document.getElementById('mainLayout').style.display = 'grid';

@@ -263,8 +263,8 @@ export class LivestockEngine {
                 healthChange += 0.03 * hoursPassed;
 
             fish.health = Math.max(
-                35,
-                Math.min(99.3, fish.health + healthChange)
+                0,
+                Math.min(100, fish.health + healthChange)
             );
 
             if (fish.health <= 0) {

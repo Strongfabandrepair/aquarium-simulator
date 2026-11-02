@@ -16,6 +16,12 @@ export class WaterChemistry {
         const tempDiff = targetTemp - w.temperature;
         w.temperature += tempDiff * 0.05 * hoursPassed;
 
+        // Initial salt preparation completes over one simulated day.
+        if (state.saltMixing && eq.tank) {
+            w.salinity = Math.min(35, w.salinity + (25 / 24) * hoursPassed);
+            if (w.salinity >= 35) state.saltMixing = false;
+        }
+
         // 2. Evaporation & Salinity
         if (w.salinity > 0) {
             const evapRate =

@@ -135,6 +135,15 @@ export class UIController {
         this.updateTimeDisplay(state);
         this.updateBudgetDisplay(state);
         this.updateProfileDisplay(state);
+        const saveStatus = document.getElementById('saveStatus');
+        if (saveStatus)
+            saveStatus.textContent = state.lastSaved ? 'Saved' : 'Unsaved';
+        const pauseButton = document.getElementById('pauseBtn');
+        if (pauseButton) pauseButton.textContent = state.paused ? '▶' : '⏸';
+        for (const speed of [1, 5, 20])
+            document
+                .getElementById('speed' + speed)
+                ?.classList.toggle('active', state.speed === speed);
 
         this._tickCounter = (this._tickCounter + 1) % 1000;
     }

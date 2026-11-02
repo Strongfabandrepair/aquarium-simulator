@@ -7,6 +7,7 @@ describe('LivestockEngine Simulation Model', () => {
     beforeEach(() => {
         // Construct a clean, isolated mock state with ideal environmental conditions
         mockState = {
+            journal: [],
             day: 5,
             lastFed: 5,
             feedingsToday: 1,

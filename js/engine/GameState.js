@@ -228,7 +228,12 @@ export class GameState {
     static getSavedProfiles() {
         try {
             const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
-            return raw ? JSON.parse(raw) : {};
+            const profiles = raw ? JSON.parse(raw) : {};
+            return profiles &&
+                typeof profiles === 'object' &&
+                !Array.isArray(profiles)
+                ? profiles
+                : {};
         } catch (err) {
             console.warn('Unable to read saved profiles:', err);
             return {};

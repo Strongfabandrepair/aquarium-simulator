@@ -40,6 +40,38 @@
       depth: 3.8
     }
   };
+  var WATER_IDEAL = {
+    temperature: { min: 76, max: 82, ideal: 78, unit: "\xB0F" },
+    salinity: { min: 34, max: 36, ideal: 35, unit: "ppt" },
+    pH: { min: 8.1, max: 8.4, ideal: 8.2, unit: "" },
+    ammonia: { min: 0, max: 0, ideal: 0, unit: "ppm", dangerAbove: 0.25 },
+    nitrite: { min: 0, max: 0, ideal: 0, unit: "ppm", dangerAbove: 0.25 },
+    nitrate: { min: 0, max: 20, ideal: 5, unit: "ppm", dangerAbove: 40 },
+    alkalinity: { min: 8, max: 12, ideal: 9, unit: "dKH" },
+    calcium: { min: 380, max: 450, ideal: 420, unit: "ppm" },
+    magnesium: { min: 1250, max: 1450, ideal: 1350, unit: "ppm" },
+    phosphate: {
+      min: 0,
+      max: 0.03,
+      ideal: 0.01,
+      unit: "ppm",
+      dangerAbove: 0.1
+    },
+    dissolvedOxygen: { min: 6, max: 8, ideal: 7, unit: "mg/L" }
+  };
+  var PARAM_LABELS = {
+    temperature: "\u{1F321} Temperature",
+    salinity: "\u{1F9C2} Salinity",
+    pH: "\u{1F4CA} pH",
+    ammonia: "\u26A0\uFE0F Ammonia (NH3)",
+    nitrite: "\u26A0\uFE0F Nitrite (NO2)",
+    nitrate: "\u{1F4C8} Nitrate (NO3)",
+    alkalinity: "\u{1F9EA} Alkalinity",
+    calcium: "\u{1F9B4} Calcium",
+    magnesium: "\u2728 Magnesium",
+    phosphate: "\u{1F7E2} Phosphate",
+    dissolvedOxygen: "\u{1F4A8} Dissolved O\u2082"
+  };
   var DEFAULT_GAME_STATE = {
     started: false,
     paused: false,
@@ -196,7 +228,8 @@
     static getSavedProfiles() {
       try {
         const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : {};
+        const profiles = raw ? JSON.parse(raw) : {};
+        return profiles && typeof profiles === "object" && !Array.isArray(profiles) ? profiles : {};
       } catch (err) {
         console.warn("Unable to read saved profiles:", err);
         return {};
@@ -389,6 +422,10 @@
       }
       const tempDiff = targetTemp - w.temperature;
       w.temperature += tempDiff * 0.05 * hoursPassed;
+      if (state.saltMixing && eq.tank) {
+        w.salinity = Math.min(35, w.salinity + 25 / 24 * hoursPassed);
+        if (w.salinity >= 35) state.saltMixing = false;
+      }
       if (w.salinity > 0) {
         const evapRate = (0.05 + (w.temperature - 70) * 5e-3) * hoursPassed;
         if (eq.autoTopOff) {
@@ -1648,8 +1685,8 @@
         if (fish.health < 90 && healthChange > 0)
           healthChange += 0.03 * hoursPassed;
         fish.health = Math.max(
-          35,
-          Math.min(99.3, fish.health + healthChange)
+          0,
+          Math.min(100, fish.health + healthChange)
         );
         if (fish.health <= 0) {
           fish.alive = false;
@@ -34095,6 +34132,13 @@ void main() {
       this.updateTimeDisplay(state);
       this.updateBudgetDisplay(state);
       this.updateProfileDisplay(state);
+      const saveStatus = document.getElementById("saveStatus");
+      if (saveStatus)
+        saveStatus.textContent = state.lastSaved ? "Saved" : "Unsaved";
+      const pauseButton = document.getElementById("pauseBtn");
+      if (pauseButton) pauseButton.textContent = state.paused ? "\u25B6" : "\u23F8";
+      for (const speed of [1, 5, 20])
+        document.getElementById("speed" + speed)?.classList.toggle("active", state.speed === speed);
       this._tickCounter = (this._tickCounter + 1) % 1e3;
     }
     static renderWaterParams(state) {
@@ -34518,6 +34562,13 @@ void main() {
       this.registerGlobalHandlers();
       this.startLoop();
       this._startRenderLoop();
+      this._autosaveTimer = setInterval(() => {
+        if (this.state.started && this.state.autosaveSeconds > 0 && Date.now() - (this.state.lastSaved || 0) >= this.state.autosaveSeconds * 1e3)
+          this.save();
+      }, 1e3);
+      window.addEventListener("beforeunload", () => {
+        if (this.state.started) this.save();
+      });
       this.render();
       window.requestAnimationFrame(() => {
         this.renderer.onResize();
@@ -34612,8 +34663,9 @@ void main() {
         journalTip = `Aragonite sand buffers pH and provides surface area for biological colonization.`;
       } else if (itemId === "saltMix") {
         this.state.equipment.saltMix = (this.state.equipment.saltMix || 0) + 160;
-        if (this.state.equipment.tank && this.state.water.salinity < 34) {
+        if (this.state.equipment.tank && this.state.water.salinity < 34 && this.state.livestock.length === 0 && this.state.corals.length === 0) {
           this.state.water.salinity = 10;
+          this.state.saltMixing = true;
           journalText = `\u{1F9C2} Added salt mix and began mixing! Salinity will gradually reach 35 ppt.`;
           journalTip = `In real life, mix salt in a separate container for 24 hours. NEVER add dry salt directly to a tank with livestock.`;
           this.readKnowledge("salinity");
@@ -35007,6 +35059,7 @@ void main() {
       this.render();
     }
     showModal(title, content, onShowCallback = null) {
+      document.getElementById("modalActions").innerHTML = "";
       document.getElementById("modalTitle").textContent = title;
       document.getElementById("modalBody").innerHTML = content;
       if (onShowCallback) onShowCallback();
@@ -35016,7 +35069,10 @@ void main() {
     }
     save() {
       const profiles = GameState.getSavedProfiles();
+      this.state.lastSaved = Date.now();
       profiles[this.state.profileName] = this.state;
+      const status = document.getElementById("saveStatus");
+      if (status) status.textContent = "Saved";
       GameState.saveProfiles(profiles);
       GameState.setActiveProfileName(this.state.profileName);
     }
@@ -35027,6 +35083,7 @@ void main() {
         this.gameState.reset(size, profileName);
         this.state.started = true;
         this.startLoop();
+        this.save();
         document.getElementById("welcomeScreen").style.display = "none";
         document.getElementById("topNav").style.display = "flex";
         document.getElementById("mainLayout").style.display = "grid";
@@ -35080,14 +35137,22 @@ void main() {
   };
 
   // js/main.js
+  var escapeHTML = (value) => String(value).replace(
+    /[&<>"']/g,
+    (c) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[c]
+  );
   window.addEventListener("DOMContentLoaded", () => {
     const engine = new GameEngine();
     window.gameEngine = engine;
     window.showProfileModal = () => {
       console.log("showProfileModal called");
-      const profiles = JSON.parse(
-        localStorage.getItem("reefSimProfiles") || "{}"
-      );
+      const profiles = GameState.getSavedProfiles();
       const active = localStorage.getItem("reefSimActiveProfile") || "Guest";
       const names = Object.keys(profiles);
       const modalTitle = document.getElementById("modalTitle");
@@ -35096,7 +35161,7 @@ void main() {
       if (modalTitle) modalTitle.textContent = "Profiles";
       if (modalBody) {
         const items = names.length > 0 ? names.map(
-          (name) => `<button class="maint-btn" style="width:100%;margin-bottom:8px;" data-profile="${name}">${name}${name === active ? " (active)" : ""}</button>`
+          (name) => `<button class="maint-btn" style="width:100%;margin-bottom:8px;" data-profile="${escapeHTML(name)}">${escapeHTML(name)}${name === active ? " (active)" : ""}</button>`
         ).join("") : '<div style="color:var(--text-secondary)">No saved profiles yet.</div>';
         const newProfileHtml = `
                 <div style="display:flex;gap:8px;margin-top:16px;">
@@ -35112,6 +35177,7 @@ void main() {
       if (modalBody) {
         modalBody.querySelectorAll("[data-profile]").forEach((button) => {
           button.onclick = () => {
+            if (engine.state.started) engine.save();
             localStorage.setItem(
               "reefSimActiveProfile",
               button.dataset.profile
@@ -35131,10 +35197,14 @@ void main() {
           createBtn.onclick = () => {
             const newName = document.getElementById("newProfileName").value.trim();
             if (newName) {
+              if (engine.state.started) engine.save();
+              engine.state.started = false;
+              document.getElementById("welcomeScreen").style.display = "flex";
+              document.getElementById("mainLayout").style.display = "none";
+              document.getElementById("topNav").style.display = "none";
+              document.getElementById("resumeButton").style.display = "none";
               localStorage.setItem("reefSimActiveProfile", newName);
-              const currentProfiles = JSON.parse(
-                localStorage.getItem("reefSimProfiles") || "{}"
-              );
+              const currentProfiles = GameState.getSavedProfiles();
               if (!currentProfiles[newName]) {
                 currentProfiles[newName] = {
                   started: false,
@@ -35159,14 +35229,15 @@ void main() {
     };
     window.resumeActiveProfile = () => {
       console.log("resumeActiveProfile called");
-      const profiles = JSON.parse(
-        localStorage.getItem("reefSimProfiles") || "{}"
-      );
+      const profiles = GameState.getSavedProfiles();
       const active = localStorage.getItem("reefSimActiveProfile") || "Guest";
       const snapshot = profiles[active];
       if (snapshot && window.gameEngine) {
         window.gameEngine.gameState.loadFromSnapshot(snapshot);
         window.gameEngine.state.started = true;
+        window.gameEngine.startLoop();
+        window.setSpeed(window.gameEngine.state.speed);
+        document.getElementById("pauseBtn").textContent = window.gameEngine.state.paused ? "\u25B6" : "\u23F8";
         document.getElementById("welcomeScreen").style.display = "none";
         document.getElementById("topNav").style.display = "flex";
         document.getElementById("mainLayout").style.display = "grid";
@@ -35182,7 +35253,9 @@ void main() {
       const modalActions = document.getElementById("modalActions");
       if (modalTitle) modalTitle.textContent = "Test Water";
       if (modalBody) {
-        modalBody.innerHTML = '<p style="color:var(--text-secondary);line-height:1.6;">Use the test kit panel to read ammonia, nitrite, nitrate, pH, alkalinity, calcium, and magnesium. In a cycled tank, ammonia and nitrite should stay at 0.</p>';
+        modalBody.innerHTML = engine.state.equipment.testKit ? "<p>Current water measurements</p>" + Object.entries(engine.state.water).map(
+          ([key, value]) => `<p><strong>${PARAM_LABELS[key] || key}</strong>: ${Number(value).toFixed(2)} ${WATER_IDEAL[key]?.unit || ""}</p>`
+        ).join("") : "<p>Purchase a Test Kit from the equipment store to measure your water.</p>";
       }
       if (modalActions) {
         modalActions.innerHTML = `<button class="action-btn primary" onclick="closeModal()">Close</button>`;
@@ -35192,6 +35265,7 @@ void main() {
       testKitOverlayEl.classList.add("show");
     };
     window.closeModal = () => {
+      engine.currentQuiz = null;
       const overlay = document.getElementById("modalOverlay");
       if (overlay) {
         overlay.style.display = "none";
@@ -35199,6 +35273,7 @@ void main() {
       }
     };
     window.clearSavedData = () => {
+      engine.state.started = false;
       localStorage.removeItem("reefSimProfiles");
       localStorage.removeItem("reefSimActiveProfile");
       console.log("Saved data cleared");

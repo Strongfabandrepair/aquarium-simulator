@@ -3,6 +3,19 @@
 // =========================================
 
 import { GameEngine } from './engine/GameEngine.js';
+import { GameState, PARAM_LABELS, WATER_IDEAL } from './engine/GameState.js';
+const escapeHTML = (value) =>
+    String(value).replace(
+        /[&<>"']/g,
+        (c) =>
+            ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            })[c]
+    );
 
 window.addEventListener('DOMContentLoaded', () => {
     const engine = new GameEngine();
@@ -10,9 +23,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     window.showProfileModal = () => {
         console.log('showProfileModal called');
-        const profiles = JSON.parse(
-            localStorage.getItem('reefSimProfiles') || '{}'
-        );
+        const profiles = GameState.getSavedProfiles();
         const active = localStorage.getItem('reefSimActiveProfile') || 'Guest';
         const names = Object.keys(profiles);
         const modalTitle = document.getElementById('modalTitle');
@@ -26,7 +37,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     ? names
                           .map(
                               (name) =>
-                                  `<button class="maint-btn" style="width:100%;margin-bottom:8px;" data-profile="${name}">${name}${name === active ? ' (active)' : ''}</button>`
+                                  `<button class="maint-btn" style="width:100%;margin-bottom:8px;" data-profile="${escapeHTML(name)}">${escapeHTML(name)}${name === active ? ' (active)' : ''}</button>`
                           )
                           .join('')
                     : '<div style="color:var(--text-secondary)">No saved profiles yet.</div>';
@@ -47,6 +58,7 @@ window.addEventListener('DOMContentLoaded', () => {
         if (modalBody) {
             modalBody.querySelectorAll('[data-profile]').forEach((button) => {
                 button.onclick = () => {
+                    if (engine.state.started) engine.save();
                     localStorage.setItem(
                         'reefSimActiveProfile',
                         button.dataset.profile
@@ -69,11 +81,19 @@ window.addEventListener('DOMContentLoaded', () => {
                         .getElementById('newProfileName')
                         .value.trim();
                     if (newName) {
+                        if (engine.state.started) engine.save();
+                        engine.state.started = false;
+                        document.getElementById('welcomeScreen').style.display =
+                            'flex';
+                        document.getElementById('mainLayout').style.display =
+                            'none';
+                        document.getElementById('topNav').style.display =
+                            'none';
+                        document.getElementById('resumeButton').style.display =
+                            'none';
                         localStorage.setItem('reefSimActiveProfile', newName);
                         // Save a blank profile so it shows up in list immediately
-                        const currentProfiles = JSON.parse(
-                            localStorage.getItem('reefSimProfiles') || '{}'
-                        );
+                        const currentProfiles = GameState.getSavedProfiles();
                         if (!currentProfiles[newName]) {
                             currentProfiles[newName] = {
                                 started: false,
@@ -102,15 +122,19 @@ window.addEventListener('DOMContentLoaded', () => {
 
     window.resumeActiveProfile = () => {
         console.log('resumeActiveProfile called');
-        const profiles = JSON.parse(
-            localStorage.getItem('reefSimProfiles') || '{}'
-        );
+        const profiles = GameState.getSavedProfiles();
         const active = localStorage.getItem('reefSimActiveProfile') || 'Guest';
         const snapshot = profiles[active];
 
         if (snapshot && window.gameEngine) {
             window.gameEngine.gameState.loadFromSnapshot(snapshot);
             window.gameEngine.state.started = true;
+            window.gameEngine.startLoop();
+            window.setSpeed(window.gameEngine.state.speed);
+            document.getElementById('pauseBtn').textContent = window.gameEngine
+                .state.paused
+                ? '▶'
+                : '⏸';
             document.getElementById('welcomeScreen').style.display = 'none';
             document.getElementById('topNav').style.display = 'flex';
             document.getElementById('mainLayout').style.display = 'grid';
@@ -129,8 +153,15 @@ window.addEventListener('DOMContentLoaded', () => {
 
         if (modalTitle) modalTitle.textContent = 'Test Water';
         if (modalBody) {
-            modalBody.innerHTML =
-                '<p style="color:var(--text-secondary);line-height:1.6;">Use the test kit panel to read ammonia, nitrite, nitrate, pH, alkalinity, calcium, and magnesium. In a cycled tank, ammonia and nitrite should stay at 0.</p>';
+            modalBody.innerHTML = engine.state.equipment.testKit
+                ? '<p>Current water measurements</p>' +
+                  Object.entries(engine.state.water)
+                      .map(
+                          ([key, value]) =>
+                              `<p><strong>${PARAM_LABELS[key] || key}</strong>: ${Number(value).toFixed(2)} ${WATER_IDEAL[key]?.unit || ''}</p>`
+                      )
+                      .join('')
+                : '<p>Purchase a Test Kit from the equipment store to measure your water.</p>';
         }
         if (modalActions) {
             modalActions.innerHTML = `<button class="action-btn primary" onclick="closeModal()">Close</button>`;
@@ -141,6 +172,7 @@ window.addEventListener('DOMContentLoaded', () => {
     };
 
     window.closeModal = () => {
+        engine.currentQuiz = null;
         const overlay = document.getElementById('modalOverlay');
         if (overlay) {
             overlay.style.display = 'none';
@@ -149,6 +181,7 @@ window.addEventListener('DOMContentLoaded', () => {
     };
 
     window.clearSavedData = () => {
+        engine.state.started = false;
         localStorage.removeItem('reefSimProfiles');
         localStorage.removeItem('reefSimActiveProfile');
         console.log('Saved data cleared');
