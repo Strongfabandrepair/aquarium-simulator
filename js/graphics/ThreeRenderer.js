@@ -80,6 +80,7 @@ export class ThreeRenderer {
         this._bubbleSpeeds = null;
         this.fishMeshes = new Map();
         this.coralMeshes = new Map();
+        this.cleanupMeshes = new Map();
         this._coralModelCache = new Map();
         this._coralManifest = null;
         this._resizeQueued = false;
@@ -314,7 +315,7 @@ export class ThreeRenderer {
                 this.scene.add(mesh);
                 this.coralMeshes.set(coral.id, mesh);
             }
-            LivestockRenderer.updateCoralAnimation(mesh, coral, now);
+            LivestockRenderer.updateCoralAnimation(mesh, coral, now, delta);
         });
 
         // Remove deleted coral meshes
@@ -327,6 +328,41 @@ export class ThreeRenderer {
                     TankBuilder.disposeGroup(mesh);
                     this.coralMeshes.delete(id);
                 }
+            }
+        }
+
+        // Cleanup purchases are cohorts; render each individual with a stable identity.
+        const cleanupIds = new Set();
+        for (const crew of state.cleanupCrew || []) {
+            for (let index = 0; index < crew.count; index++) {
+                const id = `${crew.id}:${index}`;
+                cleanupIds.add(id);
+                let mesh = this.cleanupMeshes.get(id);
+                const animal = {
+                    ...crew,
+                    id,
+                    cohortId: crew.id,
+                    instanceIndex: index,
+                    alive: true
+                };
+                if (!mesh) {
+                    mesh = LivestockRenderer.createCleanupMesh(animal);
+                    this.cleanupMeshes.set(id, mesh);
+                    this.scene.add(mesh);
+                }
+                LivestockRenderer.updateCleanupAnimation(
+                    mesh,
+                    animal,
+                    now,
+                    delta
+                );
+            }
+        }
+        for (const [id, mesh] of this.cleanupMeshes) {
+            if (!cleanupIds.has(id)) {
+                this.scene.remove(mesh);
+                TankBuilder.disposeGroup(mesh);
+                this.cleanupMeshes.delete(id);
             }
         }
 

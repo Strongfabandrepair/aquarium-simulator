@@ -7,6 +7,7 @@ import {
     EQUIPMENT_STORE,
     FISH_DATABASE,
     CORAL_DATABASE,
+    CLEANUP_DATABASE,
     KNOWLEDGE_BASE,
     StoreService
 } from '../model/StoreService.js';
@@ -82,6 +83,11 @@ export class UIController {
         const livestockTab = document.getElementById('tab-livestock');
         if (livestockTab) {
             livestockTab.addEventListener('click', (e) => {
+                const crewItem = e.target.closest(
+                    '[data-action="buy-cleanup"]'
+                );
+                if (crewItem && callbacks.onBuyCleanup)
+                    callbacks.onBuyCleanup(crewItem.dataset.id);
                 const fishItem = e.target.closest('[data-action="buy-fish"]');
                 if (fishItem && callbacks.onBuyFish) {
                     callbacks.onBuyFish(fishItem.dataset.id);
@@ -415,7 +421,15 @@ export class UIController {
             '|' +
             state.livestock.map((f) => f.id + ':' + f.alive).join(',') +
             '|' +
-            state.corals.map((c) => c.id).join(',');
+            state.corals
+                .map((c) => c.id + ':' + Math.round(c.health))
+                .join(',') +
+            '|' +
+            state.livestock.map((f) => Math.round(f.health)).join(',') +
+            '|' +
+            (state.cleanupCrew || [])
+                .map((c) => c.id + ':' + c.count)
+                .join(',');
         if (livesSig === this._lastLivestockSig) return;
         this._lastLivestockSig = livesSig;
 
@@ -482,6 +496,17 @@ export class UIController {
             });
         }
 
+        html += '<div class="store-category">🦐 Cleanup Crew</div>';
+        for (const crew of CLEANUP_DATABASE) {
+            const owned =
+                (state.cleanupCrew || []).find((c) => c.templateId === crew.id)
+                    ?.count || 0;
+            html += `<div class="store-item" data-action="buy-cleanup" data-id="${crew.id}">
+                <div class="store-item-top"><div class="store-item-name">${crew.icon} ${crew.name}</div>
+                <div class="store-item-price">$${crew.price}</div></div>
+                <div class="store-item-desc">${crew.desc}</div>
+                <div class="store-item-desc">Pack: ${crew.count} · In tank: ${owned}</div></div>`;
+        }
         this.updateHTML('tab-livestock', html);
     }
 

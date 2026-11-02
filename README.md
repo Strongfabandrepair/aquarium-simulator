@@ -1,3 +1,7 @@
+<!-- Wildlife rendering update: 2026-11-02 -->
+
+See [WILDLIFE.md](WILDLIFE.md) for the current 26-species models, procedural textures, movement system, cleanup-crew integration, rendering budgets, reference sources, and visual regression workflow. This supersedes older livestock-rendering descriptions below.
+
 # ReefSim (Aquarium Simulator)
 
 Procedural 3D saltwater aquarium learning simulator built with Three.js and modular ES6 architecture.

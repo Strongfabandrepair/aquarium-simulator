@@ -139,6 +139,7 @@ export class GameEngine {
                 onBuyEquipment: (id) => this.buyEquipment(id),
                 onBuyFish: (id) => this.buyFish(id),
                 onBuyCoral: (id) => this.buyCoral(id),
+                onBuyCleanup: (id) => this.buyCleanup(id),
                 onReadKnowledge: (key) => this.readKnowledge(key, true),
                 onTakeQuiz: (key) => this.takeQuiz(key)
             });
@@ -296,6 +297,24 @@ export class GameEngine {
             `Added ${check.template.name} to tank!`,
             'success'
         );
+        this.save();
+        this.render();
+    }
+
+    buyCleanup(id) {
+        const check = StoreService.canPurchaseCleanup(this.state, id);
+        if (!check.canBuy) {
+            UIController.showToast(check.reason, 'warning');
+            return;
+        }
+        LivestockEngine.addCleanup(this.state, id);
+        this.state.budget -= check.template.price;
+        this.state.totalSpent += check.template.price;
+        this.state.journal.push({
+            time: `Day ${this.state.day} ${this.state.hour}:00`,
+            text: `Added ${check.template.name}`,
+            tip: check.template.desc
+        });
         this.save();
         this.render();
     }
