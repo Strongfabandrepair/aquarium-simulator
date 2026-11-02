@@ -6,13 +6,13 @@ The catalog has dedicated models for all 26 entries: ten fish, ten coral types, 
 
 `FishModels.js` builds tapered, UV-mapped bodies, curved fin outlines with fin rays, paired pectoral/pelvic fins, eyes, mouths, gills, and species details. `FishTextures.js` generates and caches markings in sRGB: clownfish white/black bars, royal gramma purple/yellow division, firefish red tail gradient, yellow tang yellow body, blue tang palette marking, cardinal black bars/spots, blenny tail eyespot, wrasse stripes, mandarin reticulations, and flame angel bars/blue fin accents.
 
-Body deformation uses a traveling vertex-shader wave; the tail and fins follow an integrated phase. Tail amplitude follows travel speed. Root motion uses elapsed-time smoothing, stable hovering headings, pitch and banking. Death stops the local swim rig. Species proportions and swim frequencies vary.
+Body deformation uses a traveling vertex-shader wave; the tail and fins follow an integrated phase. Tail amplitude follows travel speed. Root motion now uses continuous active time independently of slow chemistry updates, species-specific habitat paths, measured shelter/perches, speed limits, body separation and coral avoidance. It includes stable hovering headings, pitch and banking. Pause freezes wildlife; simulation speed controls do not accelerate visual swimming. Death stops the local swim rig. Species proportions and swim frequencies vary.
 
 ## Corals and cleanup animals
 
 `CoralModels.js` differentiates oral disks, eight-tentacle star polyps, feathery pulsing xenia, hammer-shaped/torch/clustered frogspawn tips, branching acropora/birdsnest, and layered montipora plates. Geometry provides polyp and corallite detail. Soft structures sway; xenia pulses; health affects extension.
 
-`InvertebrateModels.js` provides coiled shells, snail feet and siphons, articulated crab legs/claws, and segmented shrimp with antennae. Legs, feelers and claws animate independently. Cleanup cohorts now have purchase controls and one visible model per individual. Their deterministic foraging lanes stay near the foreground sand bed.
+`InvertebrateModels.js` provides coiled shells, snail feet and siphons, articulated crab legs/claws, and segmented shrimp with antennae. Legs, feelers and claws animate independently. Cleanup cohorts now have purchase controls and one visible model per individual. Individuals have distributed homes and neighbor separation. Turbo snails graze rock or side glass; Nassarius partially bury in sand and emerge after feeding; crabs forage on rock/sand; cleaner shrimp remain near stations; peppermint shrimp move less in daylight. Shells are single continuous surfaces, and visible legs match the animal type. Colonies are mounted on measured aquascape surfaces with separated footprints; old floating placements are repaired automatically. See [HABITAT_GUIDE.md](HABITAT_GUIDE.md) for behavior, care references and simulation limits.
 
 ## Rendering and budgets
 

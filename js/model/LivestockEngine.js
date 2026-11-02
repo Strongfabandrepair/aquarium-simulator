@@ -455,17 +455,8 @@ export class LivestockEngine {
         const tmpl = CORAL_DATABASE.find((c) => c.id === templateId);
         if (!tmpl) return null;
 
-        // Determine general spread positioning
-        const rx = (Math.random() - 0.5) * 3.5;
-        const rz = (Math.random() - 0.5) * 1.5;
-
-        // Corals rest on rocks or sand bed (bottom is ~ -1.5 for med tank, sand is ~ -1.4)
-        // Rocks go up to ~ -0.2.
-        // We'll give it a rough height correlating to its position from center (rocks are usually center)
-        const distFromCenter = Math.sqrt(rx * rx + rz * rz);
-        const yBase = -1.2 + Math.max(0, 0.8 - distFromCenter * 0.4);
-        const ry = yBase + Math.random() * 0.3;
-
+        // The renderer resolves the mounting point against the actual aquascape.
+        // Keep a deterministic starting scale; existing saves are re-seated too.
         const newCoral = {
             id: state.nextCoralId++,
             templateId: tmpl.id,
@@ -475,10 +466,10 @@ export class LivestockEngine {
             addedDay: state.day,
             alkConsume: tmpl.alkConsume,
             calcConsume: tmpl.calcConsume,
-            x: rx,
-            y: ry,
-            z: rz,
-            scale: 0.8 + Math.random() * 0.4
+            x: 0,
+            y: -1.48,
+            z: 0,
+            scale: 1
         };
 
         state.corals.push(newCoral);

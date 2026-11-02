@@ -1,7 +1,10 @@
 // Species construction and frame-rate-independent world-space locomotion.
 import * as THREE from 'three';
+import { updateCleanupMotion } from './CleanupMotion.js';
 import { createFishModel, animateFishModel } from './FishModels.js';
+import { advanceFishMotion, fishTarget, habitatHeight } from './FishMotion.js';
 import { createCoralModel, animateCoralModel } from './CoralModels.js';
+import { measureCoralMount } from './CoralPlacement.js';
 import {
     createInvertebrateModel,
     animateInvertebrateModel
@@ -47,7 +50,7 @@ export class LivestockRenderer {
         return aliases[String(templateId).toLowerCase()] || String(templateId);
     }
 
-    static createFishMesh(fish) {
+    static createFishMesh(fish, context = null, time = 0) {
         const id = this.resolveTemplateId(fish.templateId);
         const mesh = createFishModel(fish, id) || new THREE.Group();
         Object.assign(mesh.userData, {
@@ -63,22 +66,49 @@ export class LivestockRenderer {
             (finite(fish.y, 0.5) - 0.5) * 2.2,
             (finite(fish.z, 0.5) - 0.5) * 2.2
         );
+        if (context) {
+            const surfaceHeight = context.surfaceHeight || ((x, z) => habitatHeight(context.habitat, x, z));
+            const target = fishTarget(fish, time * 0.001, surfaceHeight, context.habitat);
+            mesh.position.set(target.x, target.y, target.z);
+            // Resolve an initial colony overlap even when the tank starts paused.
+            advanceFishMotion(mesh, fish, time * 0.001, 1 / 60, context);
+        }
         mesh.rotation.order = 'YXZ';
         return mesh;
     }
 
-    static updateFishAnimation(mesh, fish, time, delta = 1 / 60) {
+    static updateFishAnimation(mesh, fish, time, delta = 1 / 60, context = null) {
         if (!mesh || !fish) return;
         const dt = clamp(finite(delta, 1 / 60), 0, 0.1);
         const seconds = finite(time, 0) * 0.001;
         const id = this.resolveTemplateId(fish.templateId);
         const data = mesh.userData;
         data.animationPhase ??= phaseFor(fish.id);
+        data.dead = fish.alive === false;
+        if (dt === 0) return;
         if (fish.alive === false) {
             mesh.position.y = Math.max(-1.12, mesh.position.y - 0.16 * dt);
             mesh.rotation.x +=
                 angleDelta(Math.PI, mesh.rotation.x) * blend(2, dt);
             data.swimSpeed = 0;
+            return;
+        }
+        if (context) {
+            const oldX = mesh.position.x, oldY = mesh.position.y, oldZ = mesh.position.z;
+            advanceFishMotion(mesh, fish, seconds, dt, context);
+            const dx = mesh.position.x - oldX, dy = mesh.position.y - oldY, dz = mesh.position.z - oldZ;
+            const speed = Math.hypot(dx, dy, dz) / dt;
+            data.swimSpeed = finite(data.swimSpeed, 0) + (speed - finite(data.swimSpeed, 0)) * blend(6, dt);
+            let turn = 0;
+            if (Math.hypot(dx, dz) > 0.0001) {
+                turn = angleDelta(Math.atan2(-dz, dx), mesh.rotation.y);
+                mesh.rotation.y += turn * blend(id === 'sixLineWrasse' ? 8 : 4, dt);
+            }
+            data.turnRate = turn;
+            const pitch = speed > 0.015 ? clamp(Math.atan2(dy, Math.hypot(dx, dz)), -0.35, 0.35) : 0;
+            mesh.rotation.z += (pitch - mesh.rotation.z) * blend(4, dt);
+            mesh.rotation.x += (clamp(-turn * speed * 0.24, -0.32, 0.32) - mesh.rotation.x) * blend(5, dt);
+            animateFishModel(mesh, fish, seconds, dt);
             return;
         }
         const targetX = (clamp(finite(fish.x, 0.5), 0.04, 0.96) - 0.5) * 5;
@@ -133,6 +163,7 @@ export class LivestockRenderer {
         );
         mesh.rotation.y = phase;
         mesh.scale.setScalar(clamp(finite(coral.scale, 1), 0.4, 1.6));
+        measureCoralMount(mesh);
         return mesh;
     }
 
@@ -146,7 +177,7 @@ export class LivestockRenderer {
         );
     }
 
-    static createCleanupMesh(animal) {
+    static createCleanupMesh(animal, context = {}) {
         const id = this.resolveTemplateId(animal.templateId);
         const mesh = createInvertebrateModel(animal, id) || new THREE.Group();
         Object.assign(mesh.userData, {
@@ -156,33 +187,18 @@ export class LivestockRenderer {
             animationPhase: phaseFor(animal.id),
             swimSpeed: 0
         });
-        this.updateCleanupAnimation(mesh, animal, 0, 0);
+        // Cleaner animals are smaller than the fish; preserve a common local
+        // surface-contact origin while scaling their entire anatomy together.
+        mesh.scale.setScalar(0.58);
+        this.updateCleanupAnimation(mesh, animal, 0, 0, context);
         return mesh;
     }
 
-    static updateCleanupAnimation(mesh, animal, time, delta = 1 / 60) {
+    static updateCleanupAnimation(mesh, animal, time, delta = 1 / 60, context = {}) {
         if (!mesh || !animal) return;
-        const seconds = finite(time, 0) * 0.001;
-        const phase = mesh.userData.animationPhase ?? phaseFor(animal.id);
-        const id = this.resolveTemplateId(animal.templateId);
-        const isSnail = id === 'turboSnail' || id === 'nassariusSnail';
-        const isShrimp = id === 'cleanerShrimp' || id === 'peppermintShrimp';
-        const rate = isSnail ? 0.009 : isShrimp ? 0.035 : 0.019;
-        const t = seconds * rate + phase;
-        // Stable elliptical foraging lanes in the foreground avoid intersecting central rocks.
-        const radius = 1.4 + 0.65 * Math.abs(Math.sin(phase * 3));
-        mesh.position.set(
-            Math.sin(t) * radius,
-            -1.15,
-            0.86 + Math.cos(t) * 0.22
-        );
-        mesh.rotation.y = Math.atan2(Math.sin(t) * 0.22, Math.cos(t) * radius);
-        mesh.userData.swimSpeed =
-            rate * Math.hypot(Math.cos(t) * radius, Math.sin(t) * 0.22);
+        updateCleanupMotion(mesh, animal, delta, context);
         animateInvertebrateModel(
-            mesh,
-            animal,
-            seconds,
+            mesh, animal, finite(time, 0) * 0.001,
             clamp(finite(delta, 1 / 60), 0, 0.1)
         );
     }

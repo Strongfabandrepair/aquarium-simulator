@@ -528,7 +528,7 @@ export const CORAL_DATABASE = [
         difficulty: 'medium',
         type: 'lps',
         desc: 'Branching Euphyllia with vibrant multi-lobed bubble tips.',
-        care: 'Moderate light and flow. Can touch other Euphyllia safely.',
+        care: 'Moderate light and flow. Leave room for full extension and sweepers; do not assume neighboring Euphyllia are safe to touch.',
         lightNeed: 'moderate',
         flowNeed: 'moderate',
         realPrice: '$40-120',
@@ -591,6 +591,7 @@ export const CLEANUP_DATABASE = [
         count: 10,
         difficulty: 'easy',
         desc: 'Shell crab crawling on sand & rock, picking detritus & algae.',
+        care: 'Provide spare shells and supplemental food when grazing is scarce. Hermits may attack snails for shells.',
         realPrice: '$1-3 each',
         algaeReduce: 0.5
     },
@@ -601,7 +602,8 @@ export const CLEANUP_DATABASE = [
         price: 4,
         count: 5,
         difficulty: 'easy',
-        desc: 'Large snail gliding over glass, clearing micro-algae trails.',
+        desc: 'Large snail gliding over glass and rock to graze algae.',
+        care: 'Needs available algae. Secure coral frags: large snails can knock loose colonies over.',
         realPrice: '$3-5 each',
         algaeReduce: 1.0
     },
@@ -613,8 +615,9 @@ export const CLEANUP_DATABASE = [
         count: 5,
         difficulty: 'easy',
         desc: 'Sand-burrowing scavengers that emerge when food is added.',
+        care: 'Provide a sand bed and suitable meaty food. Nassarius are scavengers, not algae grazers.',
         realPrice: '$2-4 each',
-        algaeReduce: 0.3
+        algaeReduce: 0
     },
     {
         id: 'emeraldCrab',
@@ -623,7 +626,8 @@ export const CLEANUP_DATABASE = [
         price: 8,
         count: 1,
         difficulty: 'easy',
-        desc: 'Bright green crab that harvests bubble algae & film algae.',
+        desc: 'Bright green crab foraging on rock for algae and leftover food.',
+        care: 'Supplement food when algae is scarce and observe interactions with other animals.',
         realPrice: '$6-12',
         algaeReduce: 2.0
     },
@@ -635,8 +639,9 @@ export const CLEANUP_DATABASE = [
         count: 1,
         difficulty: 'easy',
         desc: 'Red/white striped shrimp perching on rocks, waving long antennae at fish.',
+        care: 'Provide sheltered rock and food; a cleaning station is not a substitute for quarantine or disease treatment.',
         realPrice: '$20-35',
-        algaeReduce: 0.1
+        algaeReduce: 0
     },
     {
         id: 'peppermintShrimp',
@@ -645,9 +650,10 @@ export const CLEANUP_DATABASE = [
         price: 10,
         count: 1,
         difficulty: 'easy',
-        desc: 'Translucent nocturnal shrimp that consumes Aiptasia pests.',
+        desc: 'Translucent shrimp sheltering in crevices and foraging more actively in darkness.',
+        care: 'Provide cover and suitable food. Aiptasia feeding varies by species and individual; it is not guaranteed.',
         realPrice: '$8-15',
-        algaeReduce: 0.1
+        algaeReduce: 0
     }
 ];
 
@@ -660,22 +666,33 @@ export const KNOWLEDGE_BASE = {
         quiz: {
             questions: [
                 {
-                    question: "What is the first toxic compound produced by fish waste in the nitrogen cycle?",
-                    options: ["Nitrate", "Nitrite", "Ammonia", "Phosphate"],
+                    question:
+                        'What is the first toxic compound produced by fish waste in the nitrogen cycle?',
+                    options: ['Nitrate', 'Nitrite', 'Ammonia', 'Phosphate'],
                     correct: 2, // Index of correct answer
-                    explanation: "Fish waste produces ammonia (NH₃) first, which is highly toxic to aquatic life."
+                    explanation:
+                        'Fish waste produces ammonia (NH₃) first, which is highly toxic to aquatic life.'
                 },
                 {
-                    question: "Which bacteria convert ammonia to nitrite in the nitrogen cycle?",
-                    options: ["Nitrobacter", "Pseudomonas", "Nitrosomonas", "Paracoccus"],
+                    question:
+                        'Which bacteria convert ammonia to nitrite in the nitrogen cycle?',
+                    options: [
+                        'Nitrobacter',
+                        'Pseudomonas',
+                        'Nitrosomonas',
+                        'Paracoccus'
+                    ],
                     correct: 2,
-                    explanation: "Nitrosomonas bacteria are responsible for converting ammonia (NH₃) to nitrite (NO₂⁻)."
+                    explanation:
+                        'Nitrosomonas bacteria are responsible for converting ammonia (NH₃) to nitrite (NO₂⁻).'
                 },
                 {
-                    question: "What is the final, relatively less toxic product of the nitrogen cycle?",
-                    options: ["Ammonia", "Nitrite", "Nitrate", "Nitrogen gas"],
+                    question:
+                        'What is the final, relatively less toxic product of the nitrogen cycle?',
+                    options: ['Ammonia', 'Nitrite', 'Nitrate', 'Nitrogen gas'],
                     correct: 2,
-                    explanation: "Nitrate (NO₃⁻) is the final product of the nitrogen cycle, which is relatively harmless at low levels."
+                    explanation:
+                        'Nitrate (NO₃⁻) is the final product of the nitrogen cycle, which is relatively harmless at low levels.'
                 }
             ]
         }
@@ -688,22 +705,33 @@ export const KNOWLEDGE_BASE = {
         quiz: {
             questions: [
                 {
-                    question: "What is the ideal pH range for a saltwater aquarium?",
-                    options: ["7.0-7.5", "7.5-8.0", "8.1-8.4", "8.5-9.0"],
+                    question:
+                        'What is the ideal pH range for a saltwater aquarium?',
+                    options: ['7.0-7.5', '7.5-8.0', '8.1-8.4', '8.5-9.0'],
                     correct: 2,
-                    explanation: "The ideal pH range for a saltwater aquarium is 8.1-8.4 to match natural seawater conditions."
+                    explanation:
+                        'The ideal pH range for a saltwater aquarium is 8.1-8.4 to match natural seawater conditions.'
                 },
                 {
-                    question: "Which parameter acts as a pH buffer in reef aquariums?",
-                    options: ["Calcium", "Alkalinity", "Magnesium", "Nitrate"],
+                    question:
+                        'Which parameter acts as a pH buffer in reef aquariums?',
+                    options: ['Calcium', 'Alkalinity', 'Magnesium', 'Nitrate'],
                     correct: 1,
-                    explanation: "Alkalinity (dKH) measures the buffering capacity of water and helps prevent pH swings."
+                    explanation:
+                        'Alkalinity (dKH) measures the buffering capacity of water and helps prevent pH swings.'
                 },
                 {
-                    question: "What is the ideal calcium level for a reef aquarium?",
-                    options: ["200-300 ppm", "380-450 ppm", "450-550 ppm", "500-600 ppm"],
+                    question:
+                        'What is the ideal calcium level for a reef aquarium?',
+                    options: [
+                        '200-300 ppm',
+                        '380-450 ppm',
+                        '450-550 ppm',
+                        '500-600 ppm'
+                    ],
                     correct: 1,
-                    explanation: "The ideal calcium level for a reef aquarium is 380-450 ppm to support coral skeleton growth."
+                    explanation:
+                        'The ideal calcium level for a reef aquarium is 380-450 ppm to support coral skeleton growth.'
                 }
             ]
         }
@@ -715,22 +743,38 @@ export const KNOWLEDGE_BASE = {
         quiz: {
             questions: [
                 {
-                    question: "What is the ideal salinity level for a saltwater aquarium in parts per thousand (ppt)?",
-                    options: ["30 ppt", "35 ppt", "40 ppt", "45 ppt"],
+                    question:
+                        'What is the ideal salinity level for a saltwater aquarium in parts per thousand (ppt)?',
+                    options: ['30 ppt', '35 ppt', '40 ppt', '45 ppt'],
                     correct: 1,
-                    explanation: "The ideal salinity for a saltwater aquarium is 35 ppt, which matches natural seawater."
+                    explanation:
+                        'The ideal salinity for a saltwater aquarium is 35 ppt, which matches natural seawater.'
                 },
                 {
-                    question: "What happens to salinity when water evaporates from the aquarium?",
-                    options: ["It decreases", "It stays the same", "It increases", "It fluctuates randomly"],
+                    question:
+                        'What happens to salinity when water evaporates from the aquarium?',
+                    options: [
+                        'It decreases',
+                        'It stays the same',
+                        'It increases',
+                        'It fluctuates randomly'
+                    ],
                     correct: 2,
-                    explanation: "When water evaporates, the salt is left behind, causing the salinity to increase."
+                    explanation:
+                        'When water evaporates, the salt is left behind, causing the salinity to increase.'
                 },
                 {
-                    question: "What type of water should be used to top off evaporation in a saltwater aquarium?",
-                    options: ["Tap water", "Filtered water", "RO/DI water", "Distilled water"],
+                    question:
+                        'What type of water should be used to top off evaporation in a saltwater aquarium?',
+                    options: [
+                        'Tap water',
+                        'Filtered water',
+                        'RO/DI water',
+                        'Distilled water'
+                    ],
                     correct: 2,
-                    explanation: "RO/DI (Reverse Osmosis/Deionized) water should be used to top off evaporation to avoid adding minerals and contaminants."
+                    explanation:
+                        'RO/DI (Reverse Osmosis/Deionized) water should be used to top off evaporation to avoid adding minerals and contaminants.'
                 }
             ]
         }
@@ -742,22 +786,38 @@ export const KNOWLEDGE_BASE = {
         quiz: {
             questions: [
                 {
-                    question: "What is the ideal temperature range for most saltwater aquariums?",
-                    options: ["70-74°F", "76-78°F", "78-82°F", "82-86°F"],
+                    question:
+                        'What is the ideal temperature range for most saltwater aquariums?',
+                    options: ['70-74°F', '76-78°F', '78-82°F', '82-86°F'],
                     correct: 1,
-                    explanation: "The ideal temperature range for most saltwater aquariums is 76-78°F to mimic natural reef environments."
+                    explanation:
+                        'The ideal temperature range for most saltwater aquariums is 76-78°F to mimic natural reef environments.'
                 },
                 {
-                    question: "What can happen if the aquarium temperature fluctuates more than 2°F per day?",
-                    options: ["Nothing significant", "Increased algae growth", "Fish stress and disease susceptibility", "Improved coral growth"],
+                    question:
+                        'What can happen if the aquarium temperature fluctuates more than 2°F per day?',
+                    options: [
+                        'Nothing significant',
+                        'Increased algae growth',
+                        'Fish stress and disease susceptibility',
+                        'Improved coral growth'
+                    ],
                     correct: 2,
-                    explanation: "Temperature swings over 2°F per day stress fish and can trigger Marine Ich outbreaks."
+                    explanation:
+                        'Temperature swings over 2°F per day stress fish and can trigger Marine Ich outbreaks.'
                 },
                 {
-                    question: "What equipment is primarily responsible for maintaining temperature in a saltwater aquarium?",
-                    options: ["Powerhead", "Heater", "Protein skimmer", "Lighting"],
+                    question:
+                        'What equipment is primarily responsible for maintaining temperature in a saltwater aquarium?',
+                    options: [
+                        'Powerhead',
+                        'Heater',
+                        'Protein skimmer',
+                        'Lighting'
+                    ],
                     correct: 1,
-                    explanation: "The heater is primarily responsible for maintaining stable temperature in a saltwater aquarium."
+                    explanation:
+                        'The heater is primarily responsible for maintaining stable temperature in a saltwater aquarium.'
                 }
             ]
         }
@@ -769,22 +829,41 @@ export const KNOWLEDGE_BASE = {
         quiz: {
             questions: [
                 {
-                    question: "What do zooxanthellae algae provide to corals?",
-                    options: ["Oxygen only", "90% of their energy through photosynthesis", "Physical protection", "None of the above"],
+                    question: 'What do zooxanthellae algae provide to corals?',
+                    options: [
+                        'Oxygen only',
+                        '90% of their energy through photosynthesis',
+                        'Physical protection',
+                        'None of the above'
+                    ],
                     correct: 1,
-                    explanation: "Zooxanthellae algae living within coral tissue provide up to 90% of the coral's energy needs through photosynthesis."
+                    explanation:
+                        "Zooxanthellae algae living within coral tissue provide up to 90% of the coral's energy needs through photosynthesis."
                 },
                 {
-                    question: "What does PAR stand for in reef lighting?",
-                    options: ["Photosynthetic Available Radiation", "Photosynthetically Active Radiation", "Photochemical Absorption Rate", "None of the above"],
+                    question: 'What does PAR stand for in reef lighting?',
+                    options: [
+                        'Photosynthetic Available Radiation',
+                        'Photosynthetically Active Radiation',
+                        'Photochemical Absorption Rate',
+                        'None of the above'
+                    ],
                     correct: 1,
-                    explanation: "PAR stands for Photosynthetically Active Radiation, which measures light usable by photosynthetic organisms."
+                    explanation:
+                        'PAR stands for Photosynthetically Active Radiation, which measures light usable by photosynthetic organisms.'
                 },
                 {
-                    question: "Which type of coral typically requires the highest light intensity?",
-                    options: ["Soft corals", "LPS corals", "SPS corals", "All require the same"],
+                    question:
+                        'Which type of coral typically requires the highest light intensity?',
+                    options: [
+                        'Soft corals',
+                        'LPS corals',
+                        'SPS corals',
+                        'All require the same'
+                    ],
                     correct: 2,
-                    explanation: "SPS (Small Polyp Stony) corals typically require the highest light intensity and strongest water flow."
+                    explanation:
+                        'SPS (Small Polyp Stony) corals typically require the highest light intensity and strongest water flow.'
                 }
             ]
         }
@@ -796,22 +875,42 @@ export const KNOWLEDGE_BASE = {
         quiz: {
             questions: [
                 {
-                    question: "What is the primary function of a protein skimmer in a saltwater aquarium?",
-                    options: ["Add oxygen to the water", "Remove organic waste before it breaks down", "Increase water flow", "Provide biological filtration"],
+                    question:
+                        'What is the primary function of a protein skimmer in a saltwater aquarium?',
+                    options: [
+                        'Add oxygen to the water',
+                        'Remove organic waste before it breaks down',
+                        'Increase water flow',
+                        'Provide biological filtration'
+                    ],
                     correct: 1,
-                    explanation: "Protein skimmers remove dissolved organic compounds from the water before they break down into harmful substances."
+                    explanation:
+                        'Protein skimmers remove dissolved organic compounds from the water before they break down into harmful substances.'
                 },
                 {
-                    question: "What type of filtration does live rock primarily provide?",
-                    options: ["Mechanical only", "Chemical only", "Biological", "All three types"],
+                    question:
+                        'What type of filtration does live rock primarily provide?',
+                    options: [
+                        'Mechanical only',
+                        'Chemical only',
+                        'Biological',
+                        'All three types'
+                    ],
                     correct: 2,
-                    explanation: "Live rock primarily provides biological filtration by hosting beneficial bacteria that process waste products."
+                    explanation:
+                        'Live rock primarily provides biological filtration by hosting beneficial bacteria that process waste products.'
                 },
                 {
-                    question: "What does GFO stand for in aquarium filtration?",
-                    options: ["Granular Ferric Oxide", "Glass Fiber Optical", "Gravity Fed Overflow", "None of the above"],
+                    question: 'What does GFO stand for in aquarium filtration?',
+                    options: [
+                        'Granular Ferric Oxide',
+                        'Glass Fiber Optical',
+                        'Gravity Fed Overflow',
+                        'None of the above'
+                    ],
                     correct: 0,
-                    explanation: "GFO stands for Granular Ferric Oxide, which is used in media reactors to remove phosphates and silicates from aquarium water."
+                    explanation:
+                        'GFO stands for Granular Ferric Oxide, which is used in media reactors to remove phosphates and silicates from aquarium water.'
                 }
             ]
         }
@@ -823,22 +922,43 @@ export const KNOWLEDGE_BASE = {
         quiz: {
             questions: [
                 {
-                    question: "How much live rock is generally recommended per gallon of aquarium volume?",
-                    options: ["0.5-1 lbs per gallon", "1-1.5 lbs per gallon", "2-3 lbs per gallon", "3-4 lbs per gallon"],
+                    question:
+                        'How much live rock is generally recommended per gallon of aquarium volume?',
+                    options: [
+                        '0.5-1 lbs per gallon',
+                        '1-1.5 lbs per gallon',
+                        '2-3 lbs per gallon',
+                        '3-4 lbs per gallon'
+                    ],
                     correct: 1,
-                    explanation: "The general recommendation is 1 to 1.5 lbs of live rock per gallon of aquarium volume for adequate biological filtration."
+                    explanation:
+                        'The general recommendation is 1 to 1.5 lbs of live rock per gallon of aquarium volume for adequate biological filtration.'
                 },
                 {
-                    question: "What are the main benefits of live rock in a saltwater aquarium?",
-                    options: ["Only provides hiding places", "Only adds to aesthetics", "Biological filtration and habitat structure", "Only increases water flow"],
+                    question:
+                        'What are the main benefits of live rock in a saltwater aquarium?',
+                    options: [
+                        'Only provides hiding places',
+                        'Only adds to aesthetics',
+                        'Biological filtration and habitat structure',
+                        'Only increases water flow'
+                    ],
                     correct: 2,
-                    explanation: "Live rock provides both biological filtration (through beneficial bacteria) and structural habitat for aquarium inhabitants."
+                    explanation:
+                        'Live rock provides both biological filtration (through beneficial bacteria) and structural habitat for aquarium inhabitants.'
                 },
                 {
-                    question: "What process does live rock primarily support in the aquarium?",
-                    options: ["Photosynthesis", "Nitrification", "Evaporation", "Temperature regulation"],
+                    question:
+                        'What process does live rock primarily support in the aquarium?',
+                    options: [
+                        'Photosynthesis',
+                        'Nitrification',
+                        'Evaporation',
+                        'Temperature regulation'
+                    ],
                     correct: 1,
-                    explanation: "Live rock primarily supports the nitrification process by providing surface area for beneficial bacteria that convert ammonia to nitrite and then to nitrate."
+                    explanation:
+                        'Live rock primarily supports the nitrification process by providing surface area for beneficial bacteria that convert ammonia to nitrite and then to nitrate.'
                 }
             ]
         }
@@ -850,22 +970,43 @@ export const KNOWLEDGE_BASE = {
         quiz: {
             questions: [
                 {
-                    question: "What is the most important factor to consider when selecting fish for your aquarium?",
-                    options: ["Color only", "Size only", "Compatibility with other tank inhabitants", "Price only"],
+                    question:
+                        'What is the most important factor to consider when selecting fish for your aquarium?',
+                    options: [
+                        'Color only',
+                        'Size only',
+                        'Compatibility with other tank inhabitants',
+                        'Price only'
+                    ],
                     correct: 2,
-                    explanation: "Compatibility with other tank inhabitants is the most important factor when selecting fish to prevent aggression and stress."
+                    explanation:
+                        'Compatibility with other tank inhabitants is the most important factor when selecting fish to prevent aggression and stress.'
                 },
                 {
-                    question: "What does the term 'reef safe' mean when referring to aquarium fish?",
-                    options: ["The fish is colorful", "The fish won't harm corals or invertebrates", "The fish is easy to care for", "The fish is inexpensive"],
+                    question:
+                        "What does the term 'reef safe' mean when referring to aquarium fish?",
+                    options: [
+                        'The fish is colorful',
+                        "The fish won't harm corals or invertebrates",
+                        'The fish is easy to care for',
+                        'The fish is inexpensive'
+                    ],
                     correct: 1,
-                    explanation: "'Reef safe' means the fish is unlikely to harm corals, clams, or other invertebrates in a reef aquarium."
+                    explanation:
+                        "'Reef safe' means the fish is unlikely to harm corals, clams, or other invertebrates in a reef aquarium."
                 },
                 {
-                    question: "Why is it important to match fish to your aquarium's size?",
-                    options: ["For aesthetic reasons only", "To ensure adequate swimming space and prevent overcrowding", "To match the tank color", "None of the above"],
+                    question:
+                        "Why is it important to match fish to your aquarium's size?",
+                    options: [
+                        'For aesthetic reasons only',
+                        'To ensure adequate swimming space and prevent overcrowding',
+                        'To match the tank color',
+                        'None of the above'
+                    ],
                     correct: 1,
-                    explanation: "Matching fish to your aquarium's size ensures they have adequate swimming space and prevents overcrowding, which can lead to poor water quality and stress."
+                    explanation:
+                        "Matching fish to your aquarium's size ensures they have adequate swimming space and prevents overcrowding, which can lead to poor water quality and stress."
                 }
             ]
         }

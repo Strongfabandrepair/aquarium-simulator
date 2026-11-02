@@ -353,7 +353,7 @@ export class UIController {
                 <span class="maint-cooldown">Salinity: ${state.water.salinity.toFixed(1)} ppt</span>
             </button>
             <button class="maint-btn" id="btnFeedFish">
-                🍽 Feed Fish
+                🍽 Feed Livestock
                 <span class="maint-cooldown">Today: ${state.feedingsToday}× ${state.lastFed === state.day ? '✅' : ''}</span>
             </button>
         `;
@@ -442,7 +442,8 @@ export class UIController {
         if (livesSig === this._lastLivestockSig) return;
         this._lastLivestockSig = livesSig;
 
-        let html = '<div class="store-category">🐠 Fish Store</div>';
+        let html =
+            '<p class="store-item-desc">Observe where each animal swims, rests and feeds. Plan shelter, swimming room, diet and coral spacing before stocking. These animated behaviors illustrate habitat use; disease, aggression, food populations and coral stinging are not fully simulated.</p><div class="store-category">🐠 Fish Store</div>';
         FISH_DATABASE.forEach((fish) => {
             html += `
             <div class="store-item" data-action="buy-fish" data-id="${fish.id}">
@@ -451,6 +452,7 @@ export class UIController {
                     <div class="store-item-price">$${fish.price}</div>
                 </div>
                 <div class="store-item-desc">${fish.desc}</div>
+                <div class="store-item-desc"><strong>Care:</strong> ${fish.care}</div>
             </div>`;
         });
 
@@ -483,6 +485,7 @@ export class UIController {
                     <div class="store-item-price">$${coral.price}</div>
                 </div>
                 <div class="store-item-desc">${coral.desc}</div>
+                <div class="store-item-desc"><strong>Care:</strong> ${coral.care}</div>
             </div>`;
         });
 
@@ -514,6 +517,7 @@ export class UIController {
                 <div class="store-item-top"><div class="store-item-name">${crew.icon} ${crew.name}</div>
                 <div class="store-item-price">$${crew.price}</div></div>
                 <div class="store-item-desc">${crew.desc}</div>
+                <div class="store-item-desc"><strong>Care:</strong> ${crew.care}</div>
                 <div class="store-item-desc">Pack: ${crew.count} · In tank: ${owned}</div></div>`;
         }
         this.updateHTML('tab-livestock', html);

@@ -40,54 +40,56 @@ function tube(parent, material, points, radius, segments = 12) {
     return mesh;
 }
 function shell(parent, elongated = false) {
-    // Continuous logarithmic spiral tube with vertex-colored growth ribs.
-    const verts = [],
+    // One watertight shell envelope. A separated spiral tube looked like a stack
+    // of unrelated shells; spiral ribs now live on a continuous body whorl.
+    const vertices = [],
         colors = [],
         indices = [];
-    const turns = 3.1,
-        samples = 160,
-        sides = 20;
-    for (let i = 0; i <= samples; i++) {
-        const t = i / samples,
-            a = t * Math.PI * 2 * turns;
-        const r = 0.012 + Math.pow(t, 1.8) * 0.12;
-        const thick = 0.006 + Math.pow(t, 1.9) * 0.07;
-        const y = elongated ? (1 - t) * 0.24 : (1 - t) * 0.085;
+    const rings = 64,
+        sides = 64;
+    const height = elongated ? 0.29 : 0.24;
+    for (let i = 0; i <= rings; i++) {
+        const t = i / rings;
+        const radius =
+            Math.sin(Math.PI * t) *
+            (elongated ? 0.15 * (1 - 0.55 * t) : 0.17 * (1 - 0.28 * t));
         for (let j = 0; j <= sides; j++) {
-            const b = (j / sides) * Math.PI * 2;
-            const ridge = 1 + 0.045 * Math.sin(t * 420);
-            verts.push(
-                Math.cos(a) * (r + Math.cos(b) * thick * ridge),
-                y + Math.sin(b) * thick,
-                Math.sin(a) * (r + Math.cos(b) * thick * ridge)
+            const angle = (j / sides) * Math.PI * 2;
+            const spiral = angle + t * Math.PI * (elongated ? 11 : 7);
+            const ribs = 1 + 0.035 * Math.cos(spiral * 2);
+            vertices.push(
+                Math.cos(angle) * radius * ribs,
+                t * height,
+                Math.sin(angle) * radius * ribs
             );
             const stripe =
-                (Math.sin(a * 5 + b * 3) > 0.45 ? 0.57 : 0.93) *
-                (0.9 + 0.1 * Math.sin(t * 420));
-            colors.push(stripe, stripe * 0.77, stripe * 0.48);
-            if (i < samples && j < sides) {
+                0.66 +
+                0.24 * Math.cos(spiral) +
+                0.05 * Math.cos(angle * 19 + t * 70);
+            colors.push(stripe, stripe * 0.77, stripe * 0.49);
+            if (i < rings && j < sides) {
                 const n = i * (sides + 1) + j;
                 indices.push(
                     n,
-                    n + 1,
                     n + sides + 1,
                     n + 1,
-                    n + sides + 2,
-                    n + sides + 1
+                    n + 1,
+                    n + sides + 1,
+                    n + sides + 2
                 );
             }
         }
     }
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geo.setIndex(indices);
     geo.computeVertexNormals();
     const material = mat(0xffffff);
     material.vertexColors = true;
-    material.side = THREE.DoubleSide;
     const mesh = new THREE.Mesh(geo, material);
-    mesh.position.set(-0.055, elongated ? 0.1 : 0.14, 0);
+    mesh.position.set(-0.055, 0.055, 0);
+    mesh.userData.anatomicalPart = 'shell';
     parent.add(mesh);
     return mesh;
 }
@@ -105,7 +107,7 @@ function limb(root, color, side, index, shrimp = false) {
         [
             [0, 0, 0],
             [endX * 0.5, 0.01, side * 0.09],
-            [endX, -0.06, side * 0.15]
+            [endX, shrimp ? -0.09 : -0.06, side * 0.15]
         ],
         shrimp ? 0.004 : 0.009
     );
@@ -142,6 +144,16 @@ export function createInvertebrateModel(animal, id = animal.templateId) {
             [0.23, 0.035, 0.115]
         );
         root.userData.foot = foot;
+        // The mantle fills the aperture beneath the body whorl and joins the
+        // shell to the muscular foot, including when viewed against glass.
+        const mantle = sphere(
+            root,
+            flesh,
+            [-0.055, 0.085, 0],
+            [0.13, 0.07, 0.095]
+        );
+        mantle.userData.anatomicalPart = 'mantle';
+        root.userData.mantle = mantle;
         shell(root, nassarius);
         sphere(root, flesh, [0.17, 0.065, 0], [0.07, 0.045, 0.065]);
         for (const side of [-1, 1]) {
@@ -317,7 +329,8 @@ export function createInvertebrateModel(animal, id = animal.templateId) {
             bumps.forEach((g) => g.dispose());
         }
         for (const side of [-1, 1]) {
-            for (let i = 0; i < (hermit ? 3 : 4); i++)
+            // Hermits expose two walking pairs; their rear two pairs hold the shell.
+            for (let i = 0; i < (hermit ? 2 : 4); i++)
                 limb(root, i % 2 ? joint : armor, side, i);
             tube(
                 root,
@@ -379,14 +392,41 @@ export function createInvertebrateModel(animal, id = animal.templateId) {
             root.userData.claws.push(finger);
         }
     }
+    // Put the contact points on local y=0 for both sand and sloping rock.
+    root.updateMatrixWorld(true);
+    const base = new THREE.Box3().setFromObject(root).min.y;
+    for (const child of root.children) child.position.y -= base;
+    if (id === 'nassariusSnail') {
+        const burrowGroup = new THREE.Group();
+        for (const child of [...root.children]) burrowGroup.add(child);
+        root.add(burrowGroup);
+        root.userData.burrowGroup = burrowGroup;
+    }
     return root;
 }
 
-export function animateInvertebrateModel(mesh, animal, timeSeconds) {
+export function animateInvertebrateModel(
+    mesh,
+    animal,
+    timeSeconds,
+    delta = 1 / 60
+) {
     if (animal.alive === false) return;
+    if (mesh.userData.burrowGroup) {
+        const target = -(mesh.userData.burrowDepth || 0);
+        mesh.userData.burrowGroup.position.y +=
+            (target - mesh.userData.burrowGroup.position.y) *
+            (1 - Math.exp(-2 * Math.max(0, delta)));
+    }
+    const stride =
+        mesh.userData.swimSpeed === undefined
+            ? 1
+            : Math.min(1, mesh.userData.swimSpeed / 0.035);
     for (const leg of mesh.userData.legs || []) {
-        leg.group.rotation.y = Math.sin(timeSeconds * 4 + leg.phase) * 0.13;
-        leg.group.rotation.x = Math.cos(timeSeconds * 4 + leg.phase) * 0.09;
+        leg.group.rotation.y =
+            Math.sin(timeSeconds * 4 + leg.phase) * 0.13 * stride;
+        leg.group.rotation.x =
+            Math.cos(timeSeconds * 4 + leg.phase) * 0.04 * stride;
     }
     (mesh.userData.feelers || []).forEach((feeler, i) => {
         feeler.rotation.y = Math.sin(timeSeconds * 1.2 + i * 1.8) * 0.18;

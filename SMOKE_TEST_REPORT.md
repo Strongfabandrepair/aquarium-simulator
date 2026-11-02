@@ -28,3 +28,13 @@ This verifies the tested Chromium flows and numerical assertions, not every poss
 ## Follow-up: cycling with nutrient export
 
 The original fresh-start smoke case did not combine a skimmer with macroalgae. That combination exposed an incorrect minimum-nitrate requirement for completion. Completion now depends on the existing simulated cycle age (at least 12 days), ghost-feeding history, ammonia below 0.1 ppm, and nitrite below 0.15 ppm, irrespective of remaining nitrate. Existing stalled saves recover on their next unpaused tick without resetting progress. Added nine unit regressions covering filtration combinations, saved-tank recovery, premature completion guards, purchase eligibility and a single completion journal entry, plus a browser test that resumes a stalled save and purchases a clownfish.
+
+## Follow-up: wildlife habitats and anatomy
+
+Added a populated-reef browser scenario with all ten fish, ten coral types and all six cleanup types (23 individuals). It stops the chemistry timer and verifies continuous swimming, pause stability, supported/non-overlapping coral footprints, distinct cleanup positions and stable colony placement after reload. A separate browser scenario feeds a cleanup-only tank and verifies Nassarius emergence. The gallery renders all 26 species and checks geometry and shader errors.
+
+Unit regressions cover supported coral contact and spacing at all three visual capacities (8/20/40), fish movement and habitat/colony avoidance, frame-rate consistency, anatomy, cleanup distribution, feeding emergence and corrected algae-consumption diets. See [HABITAT_GUIDE.md](HABITAT_GUIDE.md) for what these behaviors do and do not model. Wildlife paths are illustrative; this pass does not certify real-tank stocking, PAR, disease or compatibility outcomes.
+
+The first full browser run passed 24/25 cases; the populated reef exceeded its initial five-second setup timeout while ten WebGL workers competed. Giving that scenario a 30-second initialization allowance passed on rerun without weakening geometry or movement assertions. Final verification totals are recorded after the last anatomy/contact correction below.
+
+Final verification after the contact and environment-rebuild fixes: build and lint passed; all 68 unit tests and all 25 Chromium browser tests passed (`npm run test:ui -- --workers=2`). Reviewed the refreshed cleanup gallery and populated-reef screenshots. No shader or browser errors were reported by those scenarios.

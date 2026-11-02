@@ -411,151 +411,6 @@
     }
   };
 
-  // js/model/WaterChemistry.js
-  var WaterChemistry = class {
-    static tick(state, hoursPassed = 1) {
-      const w = state.water;
-      const eq = state.equipment;
-      let targetTemp = 72;
-      if (eq.heater && eq.heaterOn) {
-        targetTemp = 78;
-      }
-      const tempDiff = targetTemp - w.temperature;
-      w.temperature += tempDiff * 0.05 * hoursPassed;
-      if (state.saltMixing && eq.tank) {
-        w.salinity = Math.min(35, w.salinity + 25 / 24 * hoursPassed);
-        if (w.salinity >= 35) state.saltMixing = false;
-      }
-      if (w.salinity > 0) {
-        const evapRate = (0.05 + (w.temperature - 70) * 5e-3) * hoursPassed;
-        if (eq.autoTopOff) {
-        } else {
-          w.salinity = Math.min(45, w.salinity + evapRate * 0.1);
-        }
-      }
-      if (state.cycleDay > 0 && !state.cycleComplete) {
-        state.cycleDay += hoursPassed / 24;
-        if (state.ghostFedForCycle && state.cycleDay <= 10) {
-          w.ammonia += 0.08 * hoursPassed;
-        }
-        if (w.ammonia > 0 && state.cycleDay >= 1) {
-          const nh3Conversion = Math.min(w.ammonia, 0.12 * hoursPassed);
-          w.ammonia = Math.max(0, w.ammonia - nh3Conversion);
-          w.nitrite += nh3Conversion * 0.95;
-        }
-        if (w.nitrite > 0 && state.cycleDay >= 3) {
-          const no2Conversion = Math.min(w.nitrite, 0.08 * hoursPassed);
-          w.nitrite = Math.max(0, w.nitrite - no2Conversion);
-          w.nitrate += no2Conversion * 0.9;
-        }
-        if (state.cycleDay >= 12 && w.ammonia < 0.1 && w.nitrite < 0.15 && state.ghostFedForCycle) {
-          state.cycleComplete = true;
-          state.phase = Math.max(state.phase, 2);
-          state.journal.push({
-            time: `Day ${Math.floor(state.day)}`,
-            text: `\u2705 Nitrogen Cycle Complete!`,
-            tip: `Your biological filter is established. You can now slowly add livestock.`
-          });
-        }
-      }
-      let totalNitrateProduction = 0;
-      let totalO2Consumption = 0;
-      state.livestock.forEach((fish) => {
-        if (fish.alive) {
-          totalNitrateProduction += (fish.nitrateContrib || 0.4) * 0.02 * hoursPassed;
-          totalO2Consumption += (fish.o2Consume || 0.1) * hoursPassed;
-        }
-      });
-      w.nitrate += totalNitrateProduction;
-      if (eq.proteinSkimmer && eq.proteinSkimmerOn) {
-        w.nitrate = Math.max(0, w.nitrate - 0.02 * hoursPassed);
-      }
-      if (eq.macroAlgae) {
-        w.nitrate = Math.max(0, w.nitrate - 0.05 * hoursPassed);
-        w.phosphate = Math.max(0, w.phosphate - 5e-3 * hoursPassed);
-      }
-      if (eq.mediaReactor) {
-        w.phosphate = Math.max(0, w.phosphate - 0.01 * hoursPassed);
-      }
-      const hasLight = (eq.lightBasic || eq.lightReef) && eq.lightOn;
-      if (hasLight) {
-        const algaeGrowth = 0.1 * (1 + w.nitrate / 20 + w.phosphate * 10) * hoursPassed;
-        state.algaeLevel = Math.min(100, state.algaeLevel + algaeGrowth);
-      }
-      let algaeReduced = 0;
-      state.cleanupCrew.forEach((crew) => {
-        algaeReduced += (crew.algaeReduce || 0.5) * crew.count * 0.1 * hoursPassed;
-      });
-      state.algaeLevel = Math.max(0, state.algaeLevel - algaeReduced);
-      let o2Generation = 0;
-      if (eq.powerhead && eq.powerheadOn) o2Generation += 0.3;
-      if (eq.proteinSkimmer && eq.proteinSkimmerOn) o2Generation += 0.4;
-      if (eq.wavemaker && eq.wavemakerOn) o2Generation += 0.3;
-      const maxO2 = Math.max(5, 8.5 - (w.temperature - 70) * 0.1);
-      w.dissolvedOxygen = Math.min(
-        maxO2,
-        Math.max(
-          3,
-          w.dissolvedOxygen + (o2Generation - totalO2Consumption) * 0.1 * hoursPassed
-        )
-      );
-      if (state.corals.length > 0) {
-        let totalAlkConsume = 0;
-        let totalCalcConsume = 0;
-        state.corals.forEach((coral) => {
-          if (coral.health > 20) {
-            totalAlkConsume += (coral.alkConsume || 0.1) * 0.02 * hoursPassed;
-            totalCalcConsume += (coral.calcConsume || 0.5) * 0.1 * hoursPassed;
-          }
-        });
-        if (eq.dosingPump) {
-        } else {
-          w.alkalinity = Math.max(5, w.alkalinity - totalAlkConsume);
-          w.calcium = Math.max(300, w.calcium - totalCalcConsume);
-        }
-      }
-      const isDaytime = state.hour >= 8 && state.hour < 20;
-      const targetPH = isDaytime ? 8.3 : 8.1;
-      w.pH += (targetPH - w.pH) * 0.05 * hoursPassed;
-    }
-  };
-
-  // js/model/EquipmentManager.js
-  var EquipmentManager = class {
-    static toggleEquipment(state, stateKey) {
-      if (state.equipment[stateKey] !== void 0) {
-        state.equipment[stateKey] = !state.equipment[stateKey];
-        return state.equipment[stateKey];
-      }
-      return false;
-    }
-    static getEquipmentTip(equipId) {
-      const tips = {
-        tank: "Position tank on a level stand. An unlevel tank creates high glass seam stress.",
-        stand: "A 55g tank full of water weighs 625+ lbs. Use an aquarium-rated heavy duty stand.",
-        heater: "Submerge near powerhead flow for uniform heating. Unplug during water changes.",
-        thermometer: "Check daily to prevent thermal shock from faulty heaters.",
-        powerhead: "Aim turbulent flow across rocks and corals, avoiding direct blast.",
-        returnPump: "Size pump for 5-10x turnover accounting for head pressure height.",
-        proteinSkimmer: "Allow 1-2 weeks break-in. Empty foam collection cup regularly.",
-        lightBasic: "Run 8-10 hours on a timer. Consistent photoperiod reduces nuisance algae.",
-        lightReef: "Start light intensity at 50% PAR and ramp up slowly to acclimate new corals.",
-        testKit: "Keep reagents fresh and sealed. Test weekly once established.",
-        refractometer: "Calibrate monthly using 35 ppt calibration fluid.",
-        autoTopOff: "Use dual sensors as failsafe to avoid freshwater overflow salinity crashes.",
-        dosingPump: "Calibrate pump heads monthly and dose in small increments.",
-        wavemaker: "Set alternating pulse modes to simulate real ocean reef surges.",
-        quarantineTank: "Observe new fish in QT for 4-6 weeks before display tank addition.",
-        uvSterilizer: "Replace UV lamp annually to ensure effective pathogen sterilization.",
-        mediaReactor: "Tumble GFO media gently to prevent pulverization into the display.",
-        sump: "A refugium with chaetomorpha macroalgae naturally strips nitrates & phosphates.",
-        rodiUnit: "Replace DI resin when TDS meter reads above 0 PPM.",
-        macroAlgae: "Harvest macroalgae regularly to permanently export absorbed nutrients."
-      };
-      return tips[equipId] || "";
-    }
-  };
-
   // js/model/StoreService.js
   var EQUIPMENT_STORE = [
     {
@@ -1079,7 +934,7 @@
       difficulty: "medium",
       type: "lps",
       desc: "Branching Euphyllia with vibrant multi-lobed bubble tips.",
-      care: "Moderate light and flow. Can touch other Euphyllia safely.",
+      care: "Moderate light and flow. Leave room for full extension and sweepers; do not assume neighboring Euphyllia are safe to touch.",
       lightNeed: "moderate",
       flowNeed: "moderate",
       realPrice: "$40-120",
@@ -1141,6 +996,7 @@
       count: 10,
       difficulty: "easy",
       desc: "Shell crab crawling on sand & rock, picking detritus & algae.",
+      care: "Provide spare shells and supplemental food when grazing is scarce. Hermits may attack snails for shells.",
       realPrice: "$1-3 each",
       algaeReduce: 0.5
     },
@@ -1151,7 +1007,8 @@
       price: 4,
       count: 5,
       difficulty: "easy",
-      desc: "Large snail gliding over glass, clearing micro-algae trails.",
+      desc: "Large snail gliding over glass and rock to graze algae.",
+      care: "Needs available algae. Secure coral frags: large snails can knock loose colonies over.",
       realPrice: "$3-5 each",
       algaeReduce: 1
     },
@@ -1163,8 +1020,9 @@
       count: 5,
       difficulty: "easy",
       desc: "Sand-burrowing scavengers that emerge when food is added.",
+      care: "Provide a sand bed and suitable meaty food. Nassarius are scavengers, not algae grazers.",
       realPrice: "$2-4 each",
-      algaeReduce: 0.3
+      algaeReduce: 0
     },
     {
       id: "emeraldCrab",
@@ -1173,7 +1031,8 @@
       price: 8,
       count: 1,
       difficulty: "easy",
-      desc: "Bright green crab that harvests bubble algae & film algae.",
+      desc: "Bright green crab foraging on rock for algae and leftover food.",
+      care: "Supplement food when algae is scarce and observe interactions with other animals.",
       realPrice: "$6-12",
       algaeReduce: 2
     },
@@ -1185,8 +1044,9 @@
       count: 1,
       difficulty: "easy",
       desc: "Red/white striped shrimp perching on rocks, waving long antennae at fish.",
+      care: "Provide sheltered rock and food; a cleaning station is not a substitute for quarantine or disease treatment.",
       realPrice: "$20-35",
-      algaeReduce: 0.1
+      algaeReduce: 0
     },
     {
       id: "peppermintShrimp",
@@ -1195,9 +1055,10 @@
       price: 10,
       count: 1,
       difficulty: "easy",
-      desc: "Translucent nocturnal shrimp that consumes Aiptasia pests.",
+      desc: "Translucent shrimp sheltering in crevices and foraging more actively in darkness.",
+      care: "Provide cover and suitable food. Aiptasia feeding varies by species and individual; it is not guaranteed.",
       realPrice: "$8-15",
-      algaeReduce: 0.1
+      algaeReduce: 0
     }
   ];
   var KNOWLEDGE_BASE = {
@@ -1217,7 +1078,12 @@
           },
           {
             question: "Which bacteria convert ammonia to nitrite in the nitrogen cycle?",
-            options: ["Nitrobacter", "Pseudomonas", "Nitrosomonas", "Paracoccus"],
+            options: [
+              "Nitrobacter",
+              "Pseudomonas",
+              "Nitrosomonas",
+              "Paracoccus"
+            ],
             correct: 2,
             explanation: "Nitrosomonas bacteria are responsible for converting ammonia (NH\u2083) to nitrite (NO\u2082\u207B)."
           },
@@ -1251,7 +1117,12 @@
           },
           {
             question: "What is the ideal calcium level for a reef aquarium?",
-            options: ["200-300 ppm", "380-450 ppm", "450-550 ppm", "500-600 ppm"],
+            options: [
+              "200-300 ppm",
+              "380-450 ppm",
+              "450-550 ppm",
+              "500-600 ppm"
+            ],
             correct: 1,
             explanation: "The ideal calcium level for a reef aquarium is 380-450 ppm to support coral skeleton growth."
           }
@@ -1272,13 +1143,23 @@
           },
           {
             question: "What happens to salinity when water evaporates from the aquarium?",
-            options: ["It decreases", "It stays the same", "It increases", "It fluctuates randomly"],
+            options: [
+              "It decreases",
+              "It stays the same",
+              "It increases",
+              "It fluctuates randomly"
+            ],
             correct: 2,
             explanation: "When water evaporates, the salt is left behind, causing the salinity to increase."
           },
           {
             question: "What type of water should be used to top off evaporation in a saltwater aquarium?",
-            options: ["Tap water", "Filtered water", "RO/DI water", "Distilled water"],
+            options: [
+              "Tap water",
+              "Filtered water",
+              "RO/DI water",
+              "Distilled water"
+            ],
             correct: 2,
             explanation: "RO/DI (Reverse Osmosis/Deionized) water should be used to top off evaporation to avoid adding minerals and contaminants."
           }
@@ -1299,13 +1180,23 @@
           },
           {
             question: "What can happen if the aquarium temperature fluctuates more than 2\xB0F per day?",
-            options: ["Nothing significant", "Increased algae growth", "Fish stress and disease susceptibility", "Improved coral growth"],
+            options: [
+              "Nothing significant",
+              "Increased algae growth",
+              "Fish stress and disease susceptibility",
+              "Improved coral growth"
+            ],
             correct: 2,
             explanation: "Temperature swings over 2\xB0F per day stress fish and can trigger Marine Ich outbreaks."
           },
           {
             question: "What equipment is primarily responsible for maintaining temperature in a saltwater aquarium?",
-            options: ["Powerhead", "Heater", "Protein skimmer", "Lighting"],
+            options: [
+              "Powerhead",
+              "Heater",
+              "Protein skimmer",
+              "Lighting"
+            ],
             correct: 1,
             explanation: "The heater is primarily responsible for maintaining stable temperature in a saltwater aquarium."
           }
@@ -1320,19 +1211,34 @@
         questions: [
           {
             question: "What do zooxanthellae algae provide to corals?",
-            options: ["Oxygen only", "90% of their energy through photosynthesis", "Physical protection", "None of the above"],
+            options: [
+              "Oxygen only",
+              "90% of their energy through photosynthesis",
+              "Physical protection",
+              "None of the above"
+            ],
             correct: 1,
             explanation: "Zooxanthellae algae living within coral tissue provide up to 90% of the coral's energy needs through photosynthesis."
           },
           {
             question: "What does PAR stand for in reef lighting?",
-            options: ["Photosynthetic Available Radiation", "Photosynthetically Active Radiation", "Photochemical Absorption Rate", "None of the above"],
+            options: [
+              "Photosynthetic Available Radiation",
+              "Photosynthetically Active Radiation",
+              "Photochemical Absorption Rate",
+              "None of the above"
+            ],
             correct: 1,
             explanation: "PAR stands for Photosynthetically Active Radiation, which measures light usable by photosynthetic organisms."
           },
           {
             question: "Which type of coral typically requires the highest light intensity?",
-            options: ["Soft corals", "LPS corals", "SPS corals", "All require the same"],
+            options: [
+              "Soft corals",
+              "LPS corals",
+              "SPS corals",
+              "All require the same"
+            ],
             correct: 2,
             explanation: "SPS (Small Polyp Stony) corals typically require the highest light intensity and strongest water flow."
           }
@@ -1347,19 +1253,34 @@
         questions: [
           {
             question: "What is the primary function of a protein skimmer in a saltwater aquarium?",
-            options: ["Add oxygen to the water", "Remove organic waste before it breaks down", "Increase water flow", "Provide biological filtration"],
+            options: [
+              "Add oxygen to the water",
+              "Remove organic waste before it breaks down",
+              "Increase water flow",
+              "Provide biological filtration"
+            ],
             correct: 1,
             explanation: "Protein skimmers remove dissolved organic compounds from the water before they break down into harmful substances."
           },
           {
             question: "What type of filtration does live rock primarily provide?",
-            options: ["Mechanical only", "Chemical only", "Biological", "All three types"],
+            options: [
+              "Mechanical only",
+              "Chemical only",
+              "Biological",
+              "All three types"
+            ],
             correct: 2,
             explanation: "Live rock primarily provides biological filtration by hosting beneficial bacteria that process waste products."
           },
           {
             question: "What does GFO stand for in aquarium filtration?",
-            options: ["Granular Ferric Oxide", "Glass Fiber Optical", "Gravity Fed Overflow", "None of the above"],
+            options: [
+              "Granular Ferric Oxide",
+              "Glass Fiber Optical",
+              "Gravity Fed Overflow",
+              "None of the above"
+            ],
             correct: 0,
             explanation: "GFO stands for Granular Ferric Oxide, which is used in media reactors to remove phosphates and silicates from aquarium water."
           }
@@ -1374,19 +1295,34 @@
         questions: [
           {
             question: "How much live rock is generally recommended per gallon of aquarium volume?",
-            options: ["0.5-1 lbs per gallon", "1-1.5 lbs per gallon", "2-3 lbs per gallon", "3-4 lbs per gallon"],
+            options: [
+              "0.5-1 lbs per gallon",
+              "1-1.5 lbs per gallon",
+              "2-3 lbs per gallon",
+              "3-4 lbs per gallon"
+            ],
             correct: 1,
             explanation: "The general recommendation is 1 to 1.5 lbs of live rock per gallon of aquarium volume for adequate biological filtration."
           },
           {
             question: "What are the main benefits of live rock in a saltwater aquarium?",
-            options: ["Only provides hiding places", "Only adds to aesthetics", "Biological filtration and habitat structure", "Only increases water flow"],
+            options: [
+              "Only provides hiding places",
+              "Only adds to aesthetics",
+              "Biological filtration and habitat structure",
+              "Only increases water flow"
+            ],
             correct: 2,
             explanation: "Live rock provides both biological filtration (through beneficial bacteria) and structural habitat for aquarium inhabitants."
           },
           {
             question: "What process does live rock primarily support in the aquarium?",
-            options: ["Photosynthesis", "Nitrification", "Evaporation", "Temperature regulation"],
+            options: [
+              "Photosynthesis",
+              "Nitrification",
+              "Evaporation",
+              "Temperature regulation"
+            ],
             correct: 1,
             explanation: "Live rock primarily supports the nitrification process by providing surface area for beneficial bacteria that convert ammonia to nitrite and then to nitrate."
           }
@@ -1401,19 +1337,34 @@
         questions: [
           {
             question: "What is the most important factor to consider when selecting fish for your aquarium?",
-            options: ["Color only", "Size only", "Compatibility with other tank inhabitants", "Price only"],
+            options: [
+              "Color only",
+              "Size only",
+              "Compatibility with other tank inhabitants",
+              "Price only"
+            ],
             correct: 2,
             explanation: "Compatibility with other tank inhabitants is the most important factor when selecting fish to prevent aggression and stress."
           },
           {
             question: "What does the term 'reef safe' mean when referring to aquarium fish?",
-            options: ["The fish is colorful", "The fish won't harm corals or invertebrates", "The fish is easy to care for", "The fish is inexpensive"],
+            options: [
+              "The fish is colorful",
+              "The fish won't harm corals or invertebrates",
+              "The fish is easy to care for",
+              "The fish is inexpensive"
+            ],
             correct: 1,
             explanation: "'Reef safe' means the fish is unlikely to harm corals, clams, or other invertebrates in a reef aquarium."
           },
           {
             question: "Why is it important to match fish to your aquarium's size?",
-            options: ["For aesthetic reasons only", "To ensure adequate swimming space and prevent overcrowding", "To match the tank color", "None of the above"],
+            options: [
+              "For aesthetic reasons only",
+              "To ensure adequate swimming space and prevent overcrowding",
+              "To match the tank color",
+              "None of the above"
+            ],
             correct: 1,
             explanation: "Matching fish to your aquarium's size ensures they have adequate swimming space and prevents overcrowding, which can lead to poor water quality and stress."
           }
@@ -1511,6 +1462,154 @@
       if (state.budget < tmpl.price)
         return { canBuy: false, reason: "Insufficient budget" };
       return { canBuy: true, template: tmpl };
+    }
+  };
+
+  // js/model/WaterChemistry.js
+  var WaterChemistry = class {
+    static tick(state, hoursPassed = 1) {
+      const w = state.water;
+      const eq = state.equipment;
+      let targetTemp = 72;
+      if (eq.heater && eq.heaterOn) {
+        targetTemp = 78;
+      }
+      const tempDiff = targetTemp - w.temperature;
+      w.temperature += tempDiff * 0.05 * hoursPassed;
+      if (state.saltMixing && eq.tank) {
+        w.salinity = Math.min(35, w.salinity + 25 / 24 * hoursPassed);
+        if (w.salinity >= 35) state.saltMixing = false;
+      }
+      if (w.salinity > 0) {
+        const evapRate = (0.05 + (w.temperature - 70) * 5e-3) * hoursPassed;
+        if (eq.autoTopOff) {
+        } else {
+          w.salinity = Math.min(45, w.salinity + evapRate * 0.1);
+        }
+      }
+      if (state.cycleDay > 0 && !state.cycleComplete) {
+        state.cycleDay += hoursPassed / 24;
+        if (state.ghostFedForCycle && state.cycleDay <= 10) {
+          w.ammonia += 0.08 * hoursPassed;
+        }
+        if (w.ammonia > 0 && state.cycleDay >= 1) {
+          const nh3Conversion = Math.min(w.ammonia, 0.12 * hoursPassed);
+          w.ammonia = Math.max(0, w.ammonia - nh3Conversion);
+          w.nitrite += nh3Conversion * 0.95;
+        }
+        if (w.nitrite > 0 && state.cycleDay >= 3) {
+          const no2Conversion = Math.min(w.nitrite, 0.08 * hoursPassed);
+          w.nitrite = Math.max(0, w.nitrite - no2Conversion);
+          w.nitrate += no2Conversion * 0.9;
+        }
+        if (state.cycleDay >= 12 && w.ammonia < 0.1 && w.nitrite < 0.15 && state.ghostFedForCycle) {
+          state.cycleComplete = true;
+          state.phase = Math.max(state.phase, 2);
+          state.journal.push({
+            time: `Day ${Math.floor(state.day)}`,
+            text: `\u2705 Nitrogen Cycle Complete!`,
+            tip: `Your biological filter is established. You can now slowly add livestock.`
+          });
+        }
+      }
+      let totalNitrateProduction = 0;
+      let totalO2Consumption = 0;
+      state.livestock.forEach((fish) => {
+        if (fish.alive) {
+          totalNitrateProduction += (fish.nitrateContrib || 0.4) * 0.02 * hoursPassed;
+          totalO2Consumption += (fish.o2Consume || 0.1) * hoursPassed;
+        }
+      });
+      w.nitrate += totalNitrateProduction;
+      if (eq.proteinSkimmer && eq.proteinSkimmerOn) {
+        w.nitrate = Math.max(0, w.nitrate - 0.02 * hoursPassed);
+      }
+      if (eq.macroAlgae) {
+        w.nitrate = Math.max(0, w.nitrate - 0.05 * hoursPassed);
+        w.phosphate = Math.max(0, w.phosphate - 5e-3 * hoursPassed);
+      }
+      if (eq.mediaReactor) {
+        w.phosphate = Math.max(0, w.phosphate - 0.01 * hoursPassed);
+      }
+      const hasLight = (eq.lightBasic || eq.lightReef) && eq.lightOn;
+      if (hasLight) {
+        const algaeGrowth = 0.1 * (1 + w.nitrate / 20 + w.phosphate * 10) * hoursPassed;
+        state.algaeLevel = Math.min(100, state.algaeLevel + algaeGrowth);
+      }
+      let algaeReduced = 0;
+      state.cleanupCrew.forEach((crew) => {
+        const species = CLEANUP_DATABASE.find(
+          (c) => c.id === crew.templateId
+        );
+        algaeReduced += (species?.algaeReduce ?? crew.algaeReduce ?? 0.5) * crew.count * 0.1 * hoursPassed;
+      });
+      state.algaeLevel = Math.max(0, state.algaeLevel - algaeReduced);
+      let o2Generation = 0;
+      if (eq.powerhead && eq.powerheadOn) o2Generation += 0.3;
+      if (eq.proteinSkimmer && eq.proteinSkimmerOn) o2Generation += 0.4;
+      if (eq.wavemaker && eq.wavemakerOn) o2Generation += 0.3;
+      const maxO2 = Math.max(5, 8.5 - (w.temperature - 70) * 0.1);
+      w.dissolvedOxygen = Math.min(
+        maxO2,
+        Math.max(
+          3,
+          w.dissolvedOxygen + (o2Generation - totalO2Consumption) * 0.1 * hoursPassed
+        )
+      );
+      if (state.corals.length > 0) {
+        let totalAlkConsume = 0;
+        let totalCalcConsume = 0;
+        state.corals.forEach((coral) => {
+          if (coral.health > 20) {
+            totalAlkConsume += (coral.alkConsume || 0.1) * 0.02 * hoursPassed;
+            totalCalcConsume += (coral.calcConsume || 0.5) * 0.1 * hoursPassed;
+          }
+        });
+        if (eq.dosingPump) {
+        } else {
+          w.alkalinity = Math.max(5, w.alkalinity - totalAlkConsume);
+          w.calcium = Math.max(300, w.calcium - totalCalcConsume);
+        }
+      }
+      const isDaytime = state.hour >= 8 && state.hour < 20;
+      const targetPH = isDaytime ? 8.3 : 8.1;
+      w.pH += (targetPH - w.pH) * 0.05 * hoursPassed;
+    }
+  };
+
+  // js/model/EquipmentManager.js
+  var EquipmentManager = class {
+    static toggleEquipment(state, stateKey) {
+      if (state.equipment[stateKey] !== void 0) {
+        state.equipment[stateKey] = !state.equipment[stateKey];
+        return state.equipment[stateKey];
+      }
+      return false;
+    }
+    static getEquipmentTip(equipId) {
+      const tips = {
+        tank: "Position tank on a level stand. An unlevel tank creates high glass seam stress.",
+        stand: "A 55g tank full of water weighs 625+ lbs. Use an aquarium-rated heavy duty stand.",
+        heater: "Submerge near powerhead flow for uniform heating. Unplug during water changes.",
+        thermometer: "Check daily to prevent thermal shock from faulty heaters.",
+        powerhead: "Aim turbulent flow across rocks and corals, avoiding direct blast.",
+        returnPump: "Size pump for 5-10x turnover accounting for head pressure height.",
+        proteinSkimmer: "Allow 1-2 weeks break-in. Empty foam collection cup regularly.",
+        lightBasic: "Run 8-10 hours on a timer. Consistent photoperiod reduces nuisance algae.",
+        lightReef: "Start light intensity at 50% PAR and ramp up slowly to acclimate new corals.",
+        testKit: "Keep reagents fresh and sealed. Test weekly once established.",
+        refractometer: "Calibrate monthly using 35 ppt calibration fluid.",
+        autoTopOff: "Use dual sensors as failsafe to avoid freshwater overflow salinity crashes.",
+        dosingPump: "Calibrate pump heads monthly and dose in small increments.",
+        wavemaker: "Set alternating pulse modes to simulate real ocean reef surges.",
+        quarantineTank: "Observe new fish in QT for 4-6 weeks before display tank addition.",
+        uvSterilizer: "Replace UV lamp annually to ensure effective pathogen sterilization.",
+        mediaReactor: "Tumble GFO media gently to prevent pulverization into the display.",
+        sump: "A refugium with chaetomorpha macroalgae naturally strips nitrates & phosphates.",
+        rodiUnit: "Replace DI resin when TDS meter reads above 0 PPM.",
+        macroAlgae: "Harvest macroalgae regularly to permanently export absorbed nutrients."
+      };
+      return tips[equipId] || "";
     }
   };
 
@@ -1853,11 +1952,6 @@
     static addCoral(state, templateId) {
       const tmpl = CORAL_DATABASE.find((c) => c.id === templateId);
       if (!tmpl) return null;
-      const rx = (Math.random() - 0.5) * 3.5;
-      const rz = (Math.random() - 0.5) * 1.5;
-      const distFromCenter = Math.sqrt(rx * rx + rz * rz);
-      const yBase = -1.2 + Math.max(0, 0.8 - distFromCenter * 0.4);
-      const ry = yBase + Math.random() * 0.3;
       const newCoral = {
         id: state.nextCoralId++,
         templateId: tmpl.id,
@@ -1867,10 +1961,10 @@
         addedDay: state.day,
         alkConsume: tmpl.alkConsume,
         calcConsume: tmpl.calcConsume,
-        x: rx,
-        y: ry,
-        z: rz,
-        scale: 0.8 + Math.random() * 0.4
+        x: 0,
+        y: -1.48,
+        z: 0,
+        scale: 1
       };
       state.corals.push(newCoral);
       return newCoral;
@@ -31605,6 +31699,228 @@
     }
   };
 
+  // js/graphics/CleanupMotion.js
+  var clamp2 = (v2, a, b) => Math.max(a, Math.min(b, v2));
+  var UP = new Vector3(0, 1, 0);
+  var fallback = {
+    floorY: -1.15,
+    bounds: { minX: -2.75, maxX: 2.75, minZ: -1.25, maxZ: 1.25 },
+    sample: (x, z) => ({ x, y: -1.15, z, normal: UP, type: "sand" })
+  };
+  function cleanupSeed(id) {
+    let hash = 2166136261;
+    for (const char of String(id))
+      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+    hash ^= hash >>> 16;
+    hash = Math.imul(hash, 2146121005);
+    hash ^= hash >>> 15;
+    hash = Math.imul(hash, 2221713035);
+    return ((hash ^ hash >>> 16) >>> 0) / 4294967296;
+  }
+  function clearance(point, mesh, context) {
+    let minimum = 10;
+    for (const other of context.cleanupMeshes?.values() || []) {
+      if (other === mesh || !other.userData.cleanupMotion) continue;
+      minimum = Math.min(minimum, point.distanceTo(other.position) - 0.44);
+    }
+    for (const coral of context.coralMeshes?.values() || []) {
+      const radius = coral.userData.placementRadius || 0.4;
+      if (Math.abs(point.y - coral.position.y) < 0.5)
+        minimum = Math.min(
+          minimum,
+          Math.hypot(
+            point.x - coral.position.x,
+            point.z - coral.position.z
+          ) - radius - 0.24
+        );
+    }
+    return minimum;
+  }
+  function surfacePose(mesh, x, z, surface, heading) {
+    const up = surface.normal.clone().normalize();
+    const forward = new Vector3(Math.cos(heading), 0, -Math.sin(heading));
+    forward.addScaledVector(up, -forward.dot(up)).normalize();
+    if (forward.lengthSq() < 0.1) forward.set(0, 0, 1);
+    const side = new Vector3().crossVectors(forward, up).normalize();
+    forward.crossVectors(up, side).normalize();
+    mesh.quaternion.setFromRotationMatrix(
+      new Matrix4().makeBasis(forward, up, side)
+    );
+    mesh.position.set(x, surface.y, z);
+    mesh.userData.habitatMode = surface.type;
+  }
+  function initialize(mesh, animal, context) {
+    const habitat = context.habitat || fallback;
+    const seed = cleanupSeed(animal.id);
+    const species = animal.templateId;
+    const glass = species === "turboSnail" && seed < 0.5;
+    const sand = species === "nassariusSnail";
+    const b = habitat.bounds;
+    let best, bestScore = -Infinity;
+    for (let i = 0; i < 96; i++) {
+      const u = (seed + i * 0.61803398875) % 1;
+      const v2 = (seed * 7.13 + i * 0.41421356237) % 1;
+      const x = b.minX + 0.23 + u * (b.maxX - b.minX - 0.46);
+      const z = b.minZ + 0.23 + v2 * (b.maxZ - b.minZ - 0.46);
+      const surface = habitat.sample(x, z);
+      if (sand && surface.type === "rock") continue;
+      const point = new Vector3(x, surface.y, z);
+      if (glass) point.set(seed < 0.25 ? -2.94 : 2.94, -0.85 + u * 1.6, z);
+      const score = clearance(point, mesh, context) + (!sand && !glass && surface.type === "rock" ? 2 : 0);
+      if (score > bestScore) {
+        best = { point, surface };
+        bestScore = score;
+      }
+      if (score > (sand || glass ? 0.2 : 2.2)) break;
+    }
+    best ||= {
+      point: new Vector3(-2.5, habitat.floorY, 1),
+      surface: { y: habitat.floorY, normal: UP, type: "sand" }
+    };
+    const motion = {
+      habitat,
+      seed,
+      glass,
+      sand,
+      home: best.point.clone(),
+      elapsed: 0,
+      heading: seed * Math.PI * 2,
+      surface: best.surface,
+      lastSample: best.point.clone()
+    };
+    mesh.userData.cleanupMotion = motion;
+    mesh.position.copy(best.point);
+    if (glass) {
+      const up = new Vector3(best.point.x < 0 ? 1 : -1, 0, 0);
+      const forward = new Vector3(0, 1, 0);
+      const side = new Vector3().crossVectors(forward, up);
+      mesh.quaternion.setFromRotationMatrix(
+        new Matrix4().makeBasis(forward, up, side)
+      );
+      mesh.userData.habitatMode = "glass";
+    } else
+      surfacePose(
+        mesh,
+        best.point.x,
+        best.point.z,
+        best.surface,
+        motion.heading
+      );
+    return motion;
+  }
+  function updateCleanupMotion(mesh, animal, delta, context = {}) {
+    const dt = clamp2(Number.isFinite(delta) ? delta : 1 / 60, 0, 0.1);
+    let motion = mesh.userData.cleanupMotion;
+    const habitat = context.habitat || fallback;
+    if (motion && motion.habitat !== habitat) {
+      const sample = habitat.sample(mesh.position.x, mesh.position.z);
+      const bounds = habitat.bounds;
+      const supported = motion.glass ? mesh.position.z >= bounds.minZ && mesh.position.z <= bounds.maxZ : sample.type === motion.surface.type && Math.abs(sample.y - mesh.position.y) < 0.025 && mesh.position.x >= bounds.minX && mesh.position.x <= bounds.maxX && mesh.position.z >= bounds.minZ && mesh.position.z <= bounds.maxZ;
+      if (supported) {
+        motion.habitat = habitat;
+        motion.surface = sample;
+        motion.lastSample.set(mesh.position.x, sample.y, mesh.position.z);
+      } else motion = null;
+    }
+    if (!motion) motion = initialize(mesh, animal, context);
+    if (animal.alive === false || dt === 0) return;
+    motion.elapsed += dt;
+    const species = animal.templateId;
+    const shrimp = species.includes("Shrimp");
+    const station = species === "cleanerShrimp";
+    const night = context.state?.hour >= 20 || context.state?.hour < 7;
+    const speed = species.includes("Snail") ? 0.025 : shrimp ? 0.065 : 0.045;
+    let active = species === "peppermintShrimp" && !night ? 0.2 : 1;
+    if (motion.sand) {
+      const state = context.state;
+      const feedingKey = state ? `${state.lastFed}:${state.feedingsToday}` : "";
+      if (state && state.lastFed === state.day && state.feedingsToday > 0 && motion.feedingKey !== feedingKey)
+        motion.fedUntil = motion.elapsed + 45;
+      motion.feedingKey = feedingKey;
+      const fed = motion.elapsed < (motion.fedUntil || 0);
+      const buried = Boolean(state?.equipment?.substrate) && !fed;
+      mesh.userData.burrowDepth = buried ? 0.15 : 0;
+      if (buried) active = 0.08;
+    }
+    const t = motion.elapsed * (station ? 0.3 : 0.08) + motion.seed * Math.PI * 2;
+    const range = station ? 0.15 : shrimp ? 0.4 : motion.sand ? 0.65 : 0.55;
+    const desired = motion.home.clone();
+    if (motion.glass) {
+      desired.y += Math.sin(t) * 0.32;
+      desired.z += Math.cos(t * 0.73) * 0.28;
+    } else {
+      desired.x += Math.sin(t) * range;
+      desired.z += Math.cos(t * 0.73) * range * 0.65;
+    }
+    const direction = desired.sub(mesh.position);
+    if (!motion.glass) direction.y = 0;
+    if (direction.length() > 0.01) direction.normalize();
+    for (const other of context.cleanupMeshes?.values() || []) {
+      if (other === mesh || !other.userData.cleanupMotion) continue;
+      const away = mesh.position.clone().sub(other.position);
+      const distance = away.length();
+      if (distance < 0.5 && distance > 1e-4)
+        direction.addScaledVector(away, (0.5 - distance) * 8 / distance);
+    }
+    for (const coral of context.coralMeshes?.values() || []) {
+      const away = mesh.position.clone().sub(coral.position);
+      if (Math.abs(away.y) > 0.5) continue;
+      away.y = 0;
+      const distance = away.length();
+      const radius = (coral.userData.placementRadius || 0.4) + 0.24;
+      if (distance < radius && distance > 1e-4)
+        direction.addScaledVector(
+          away,
+          (radius - distance) * 10 / distance
+        );
+    }
+    if (motion.glass) direction.x = 0;
+    else direction.y = 0;
+    direction.clampLength(0, 1);
+    const before = mesh.position.clone();
+    const next = before.clone().addScaledVector(direction, speed * active * dt);
+    const b = motion.habitat.bounds;
+    if (motion.glass) {
+      next.y = clamp2(next.y, -1.02, 1.12);
+      next.z = clamp2(next.z, b.minZ + 0.2, b.maxZ - 0.2);
+      const up = new Vector3(next.x < 0 ? 1 : -1, 0, 0);
+      const forward = direction.lengthSq() > 1e-3 ? direction.clone().normalize() : new Vector3(0, 1, 0);
+      const side = new Vector3().crossVectors(forward, up).normalize();
+      mesh.quaternion.setFromRotationMatrix(
+        new Matrix4().makeBasis(forward, up, side)
+      );
+      mesh.position.copy(next);
+      mesh.userData.habitatMode = "glass";
+    } else {
+      next.x = clamp2(next.x, b.minX + 0.23, b.maxX - 0.23);
+      next.z = clamp2(next.z, b.minZ + 0.23, b.maxZ - 0.23);
+      let sample = motion.surface;
+      if (Math.hypot(
+        next.x - motion.lastSample.x,
+        next.z - motion.lastSample.z
+      ) >= 0.015) {
+        sample = motion.habitat.sample(next.x, next.z);
+        motion.surface = sample;
+        motion.lastSample.set(next.x, sample.y, next.z);
+      } else {
+        const n = sample.normal;
+        sample = {
+          ...sample,
+          y: motion.lastSample.y - ((next.x - motion.lastSample.x) * n.x + (next.z - motion.lastSample.z) * n.z) / Math.max(0.15, n.y)
+        };
+      }
+      if (motion.sand && sample.type === "rock" || Math.abs(sample.y - before.y) > 0.12) {
+        motion.home.copy(before);
+        motion.seed = (motion.seed + 0.381966) % 1;
+      } else {
+        if (direction.lengthSq() > 1e-3)
+          motion.heading = Math.atan2(-direction.z, direction.x);
+        surfacePose(mesh, next.x, next.z, sample, motion.heading);
+      }
+    }
+    mesh.userData.swimSpeed = before.distanceTo(mesh.position) / dt;
+  }
+
   // js/graphics/FishTextures.js
   var cache = /* @__PURE__ */ new Map();
   var palettes = {
@@ -32200,6 +32516,249 @@
     }
     if (rig.sail)
       rig.sail.rotation.z = active ? -0.12 + Math.sin(timeSeconds * 3) * 0.1 : -0.5;
+  }
+
+  // js/graphics/FishMotion.js
+  var clamp3 = (n, low, high) => Math.max(low, Math.min(high, n));
+  var finite = (n, fallback2) => Number.isFinite(n) ? n : fallback2;
+  var smooth = (n) => n * n * (3 - 2 * n);
+  function fishSeed(id) {
+    let hash = 2166136261;
+    for (const char of String(id ?? 0))
+      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+    hash ^= hash >>> 16;
+    hash = Math.imul(hash, 2146121005);
+    hash ^= hash >>> 15;
+    return (hash >>> 0) / 4294967296;
+  }
+  var heightCaches = /* @__PURE__ */ new WeakMap();
+  var shelterCaches = /* @__PURE__ */ new WeakMap();
+  var coralBounds = /* @__PURE__ */ new WeakMap();
+  function shelterAnchor(habitat, seed) {
+    if (!habitat?.rockPoints?.length) return null;
+    let edges = shelterCaches.get(habitat);
+    if (!edges) {
+      const points = [...habitat.rockPoints].sort((a, b) => b.z - a.z);
+      edges = points.slice(0, Math.max(1, Math.ceil(points.length / 3)));
+      shelterCaches.set(habitat, edges);
+    }
+    return edges[Math.floor(seed * edges.length)];
+  }
+  function coralObstacle(mesh) {
+    const signature = `${mesh.position.x}:${mesh.position.y}:${mesh.position.z}:${mesh.scale.x}:${mesh.scale.y}:${mesh.scale.z}`;
+    let cached2 = coralBounds.get(mesh);
+    if (cached2?.signature === signature) return cached2;
+    mesh.updateMatrixWorld(true);
+    const bounds = new Box3().setFromObject(mesh);
+    if (bounds.isEmpty()) return null;
+    cached2 = {
+      signature,
+      x: (bounds.min.x + bounds.max.x) / 2,
+      z: (bounds.min.z + bounds.max.z) / 2,
+      minY: bounds.min.y - 0.12,
+      maxY: bounds.max.y + 0.15,
+      radius: Math.max(
+        (bounds.max.x - bounds.min.x) / 2,
+        (bounds.max.z - bounds.min.z) / 2
+      ) + 0.18
+    };
+    coralBounds.set(mesh, cached2);
+    return cached2;
+  }
+  function habitatHeight(habitat, x, z) {
+    if (!habitat?.sample) return -1.32;
+    let cache2 = heightCaches.get(habitat);
+    if (!cache2) {
+      cache2 = /* @__PURE__ */ new Map();
+      heightCaches.set(habitat, cache2);
+    }
+    const cell = 0.1;
+    const ix = Math.floor(clamp3(finite(x, 0), -2.4, 2.4) / cell);
+    const iz = Math.floor(clamp3(finite(z, 0), -1.2, 1.2) / cell);
+    let highest = finite(habitat.floorY, -1.32);
+    for (const gx of [ix, ix + 1]) {
+      for (const gz of [iz, iz + 1]) {
+        const key = `${gx}:${gz}`;
+        if (!cache2.has(key))
+          cache2.set(
+            key,
+            finite(habitat.sample(gx * cell, gz * cell)?.y, highest)
+          );
+        highest = Math.max(highest, cache2.get(key));
+      }
+    }
+    return highest;
+  }
+  function fishTarget(fish, seconds, surfaceHeight = () => -1.32, habitat = null) {
+    const species = String(fish.templateId).toLowerCase();
+    const seed = fishSeed(fish.id);
+    const phase = seed * Math.PI * 2;
+    const t = Math.max(0, finite(seconds, 0));
+    const homeX = (seed - 0.5) * 3.1;
+    const homeZ = 0.42 + Math.sin(phase * 3) * 0.38;
+    let x, y, z, speed, behavior;
+    if (species === "yellowtang" || species === "bluehippotang") {
+      const angle = t * 0.28 + phase;
+      x = Math.sin(angle) * 2.1;
+      z = Math.cos(angle) * 0.9;
+      y = 0.38 + Math.sin(angle * 1.6) * 0.23;
+      speed = 0.72;
+      behavior = "cruising";
+    } else if (species === "sixlinewrasse" || species === "flameangel") {
+      const angle = t * (species === "sixlinewrasse" ? 0.48 : 0.26) + phase;
+      x = Math.sin(angle) * 1.85;
+      z = Math.sin(angle * 0.73 + phase) * 0.82;
+      y = -0.35 + Math.cos(angle * 1.3) * 0.2;
+      speed = species === "sixlinewrasse" ? 0.85 : 0.5;
+      behavior = species === "sixlinewrasse" ? "darting" : "grazing";
+    } else if (species === "mandaringoby") {
+      const angle = t * 0.11 + phase;
+      x = Math.sin(angle) * 1.75;
+      z = 0.55 + Math.sin(angle * 1.4) * 0.37;
+      y = -2;
+      speed = 0.22;
+      behavior = "foraging";
+    } else if (species === "tailspotblenny") {
+      const cycle = t / 9 + seed * 4;
+      const step = Math.floor(cycle);
+      const progress = smooth(clamp3((cycle % 1 - 0.7) / 0.3, 0, 1));
+      const a = phase + step * 0.9;
+      const b = a + 0.9;
+      x = homeX * 0.7 + 0.4 * (Math.sin(a) * (1 - progress) + Math.sin(b) * progress);
+      z = 0.12 + 0.3 * (Math.cos(a) * (1 - progress) + Math.cos(b) * progress);
+      const points = habitat?.rockPoints;
+      if (points?.length) {
+        const anchor = points[Math.floor(seed * points.length)];
+        let neighbor = anchor;
+        let best = Infinity;
+        for (const point of points) {
+          const distance = Math.hypot(
+            point.x - anchor.x,
+            point.z - anchor.z
+          );
+          if (distance > 0.25 && distance < best) {
+            best = distance;
+            neighbor = point;
+          }
+        }
+        const fraction = step % 2 ? 1 - progress : progress;
+        x = anchor.x + (neighbor.x - anchor.x) * fraction;
+        z = anchor.z + (neighbor.z - anchor.z) * fraction;
+      }
+      y = -2;
+      speed = progress > 0 ? 0.5 : 0.16;
+      behavior = progress > 0 ? "grazing" : "perching";
+    } else {
+      const radius = species === "clownfish" ? 0.36 : species === "banggaicardinal" ? 0.22 : 0.3;
+      const angle = t * 0.55 + phase;
+      x = homeX + Math.sin(angle) * radius;
+      z = homeZ + Math.cos(angle * 0.8) * radius * 0.55;
+      y = species === "firefishgoby" ? -0.62 : species === "royalgramma" ? -0.48 : -0.05;
+      y += Math.sin(angle * 0.75) * 0.08;
+      if (species === "royalgramma" || species === "firefishgoby") {
+        const anchor = shelterAnchor(habitat, seed);
+        if (anchor) {
+          x = anchor.x + Math.sin(angle) * 0.2;
+          z = anchor.z + 0.18 + Math.cos(angle * 0.8) * 0.12;
+          y = anchor.y + (species === "firefishgoby" ? 0.36 : 0.22) + Math.sin(angle * 0.75) * 0.06;
+        }
+      }
+      speed = species === "banggaicardinal" ? 0.18 : 0.3;
+      behavior = "hovering";
+    }
+    x = clamp3(x, -2.3, 2.3);
+    z = clamp3(z, -1.08, 1.08);
+    const bottomFish = species === "tailspotblenny" || species === "mandaringoby";
+    const clearance2 = bottomFish ? 0.1 : 0.26;
+    const floor = finite(surfaceHeight(x, z), -1.32);
+    y = Math.max(y, floor + clearance2);
+    return { x, y: clamp3(y, -1.22, 1.08), z, speed, behavior, clearance: clearance2 };
+  }
+  function advanceFishMotion(mesh, fish, seconds, delta, context = {}) {
+    const dt = clamp3(finite(delta, 0), 0, 0.1);
+    if (!dt || fish.alive === false) return;
+    const surfaceHeight = context.surfaceHeight || ((x, z) => habitatHeight(context.habitat, x, z));
+    const target = fishTarget(fish, seconds, surfaceHeight, context.habitat);
+    const position = mesh.position;
+    let dx = target.x - position.x;
+    let dy = target.y - position.y;
+    let dz = target.z - position.z;
+    for (const other of context.fishMeshes?.values() || []) {
+      if (other === mesh || other.userData.dead) continue;
+      let sx = position.x - other.position.x;
+      const sy = position.y - other.position.y;
+      let sz = position.z - other.position.z;
+      let distance2 = Math.hypot(sx, sy, sz);
+      if (distance2 < 0.65) {
+        if (distance2 < 1e-3) {
+          const phase = fishSeed(fish.id) * Math.PI * 2;
+          sx = Math.cos(phase) * 0.01;
+          sz = Math.sin(phase) * 0.01;
+          distance2 = 0.01;
+        }
+        const repulsion = (0.65 - distance2) * 2.2 / distance2;
+        dx += sx * repulsion;
+        dy += sy * repulsion;
+        dz += sz * repulsion;
+      }
+    }
+    const obstacles = [];
+    for (const colony of context.coralMeshes?.values() || []) {
+      const obstacle = coralObstacle(colony);
+      if (!obstacle || position.y < obstacle.minY || position.y > obstacle.maxY)
+        continue;
+      obstacles.push(obstacle);
+      const sx = position.x - obstacle.x, sz = position.z - obstacle.z;
+      const distance2 = Math.hypot(sx, sz);
+      if (distance2 > 1e-4 && distance2 < obstacle.radius + 0.25) {
+        const nx = sx / distance2, nz = sz / distance2;
+        const inward = Math.min(0, dx * nx + dz * nz);
+        dx -= inward * nx;
+        dz -= inward * nz;
+        const turn = fishSeed(fish.id) > 0.5 ? 1 : -1;
+        const steering = (obstacle.radius + 0.25 - distance2) * 1.8;
+        dx += (nx - nz * turn) * steering;
+        dz += (nz + nx * turn) * steering;
+      }
+    }
+    const distance = Math.hypot(dx, dy, dz);
+    const step = Math.min(
+      distance * (1 - Math.exp(-2.4 * dt)),
+      target.speed * dt
+    );
+    if (distance > 1e-5) {
+      position.x = clamp3(position.x + dx / distance * step, -2.35, 2.35);
+      position.y = clamp3(position.y + dy / distance * step, -1.22, 1.08);
+      position.z = clamp3(position.z + dz / distance * step, -1.1, 1.1);
+    }
+    for (const obstacle of obstacles) {
+      if (position.y < obstacle.minY || position.y > obstacle.maxY) continue;
+      const sx = position.x - obstacle.x, sz = position.z - obstacle.z;
+      if (Math.hypot(sx, sz) >= obstacle.radius) continue;
+      let best = null;
+      const angle = Math.atan2(sz, sx);
+      for (let i = 0; i < 16; i++) {
+        const a = angle + i * Math.PI / 8;
+        const x = obstacle.x + Math.cos(a) * obstacle.radius;
+        const z = obstacle.z + Math.sin(a) * obstacle.radius;
+        if (Math.abs(x) > 2.35 || Math.abs(z) > 1.1) continue;
+        const distance2 = Math.hypot(position.x - x, position.z - z);
+        if (!best || distance2 < best.distance) best = { x, z, distance: distance2 };
+      }
+      if (best) {
+        position.x = best.x;
+        position.z = best.z;
+      }
+    }
+    position.y = Math.max(
+      position.y,
+      Math.min(
+        1.08,
+        finite(surfaceHeight(position.x, position.z), -1.32) + target.clearance
+      )
+    );
+    mesh.userData.behavior = target.behavior;
+    mesh.userData.motionSpeed = step / dt;
   }
 
   // node_modules/three/examples/jsm/utils/BufferGeometryUtils.js
@@ -33114,6 +33673,97 @@
     }
   }
 
+  // js/graphics/CoralPlacement.js
+  var SPS = /* @__PURE__ */ new Set(["acropora", "birdsnest", "montipora"]);
+  var LPS = /* @__PURE__ */ new Set(["hammerCoral", "torchCoral", "frogspawn"]);
+  var SPREADING = /* @__PURE__ */ new Set(["greenStarPolyps", "xeniaCorals"]);
+  function placementScore(point, coral, index) {
+    const rock = point.type === "rock";
+    const preference = SPS.has(coral.templateId) ? rock ? point.y * 0.5 + 2 : 0 : SPREADING.has(coral.templateId) ? rock ? 0 : 1 : LPS.has(coral.templateId) ? rock ? 0.25 : 0.5 : rock ? 0.5 : 0;
+    return preference + (Math.sin(point.x * 17 + point.z * 23 + index * 7) + 1) * 0.03;
+  }
+  function syncCoralPlacements(corals, meshes, habitat) {
+    const signature = corals.map((coral) => `${coral.id}:${coral.templateId}:${coral.scale}`).join("|");
+    if (habitat.coralSignature === signature && habitat.coralMeshes === meshes)
+      return;
+    habitat.coralSignature = signature;
+    habitat.coralMeshes = meshes;
+    const occupied = [];
+    for (let index = 0; index < corals.length; index++) {
+      const coral = corals[index];
+      const mesh = meshes.get(coral.id);
+      if (!mesh) continue;
+      const requestedScale = Number.isFinite(coral.scale) ? Math.max(0.4, Math.min(1.6, coral.scale)) : 1;
+      mesh.scale.setScalar(requestedScale * habitat.coralScale);
+      const radius = mesh.userData.coralRadius * mesh.scale.x;
+      const gap = LPS.has(coral.templateId) ? 0.12 : SPREADING.has(coral.templateId) ? 0.1 : 0.055;
+      const candidates = habitat.candidates.filter(
+        (p) => p.normal.y > 0.82 && Math.abs(p.x) + radius < 2.88 && Math.abs(p.z) + radius < 1.38 && occupied.every(
+          (other) => Math.hypot(p.x - other.x, p.z - other.z) >= radius + other.radius + Math.max(gap, other.gap)
+        )
+      );
+      candidates.sort(
+        (a, b) => placementScore(b, coral, index) - placementScore(a, coral, index)
+      );
+      let point = candidates[0];
+      if (!point) {
+        const ranked = habitat.candidates.map((p) => ({
+          p,
+          clearance: Math.min(
+            2.88 - Math.abs(p.x),
+            1.38 - Math.abs(p.z),
+            ...occupied.map(
+              (other) => Math.hypot(p.x - other.x, p.z - other.z) - other.radius - Math.max(gap, other.gap)
+            )
+          )
+        })).filter(
+          ({ p }) => p.normal.y > 0.82 && Math.abs(p.x) < 2.55 && Math.abs(p.z) < 1.1
+        ).sort((a, b) => b.clearance - a.clearance);
+        point = ranked[0]?.p || habitat.sample(0, 0);
+        const fit = Math.max(
+          0.015,
+          (ranked[0]?.clearance || radius) - 0.015
+        );
+        mesh.scale.multiplyScalar(Math.min(1, fit / radius));
+      }
+      mesh.position.set(
+        point.x,
+        point.y + mesh.userData.coralBaseOffset * mesh.scale.x - 0.012,
+        point.z
+      );
+      mesh.userData.habitat = point.type;
+      mesh.userData.surfaceY = point.y;
+      mesh.userData.placementRadius = mesh.userData.coralRadius * mesh.scale.x;
+      occupied.push({ ...point, radius: mesh.userData.placementRadius, gap });
+      coral.x = mesh.position.x;
+      coral.y = mesh.position.y;
+      coral.z = mesh.position.z;
+      coral.habitat = point.type;
+    }
+  }
+  function measureCoralMount(mesh) {
+    const originalPosition = mesh.position.clone();
+    const originalScale = mesh.scale.clone();
+    mesh.position.set(0, 0, 0);
+    mesh.scale.setScalar(1);
+    mesh.updateMatrixWorld(true);
+    const vertex = new Vector3();
+    let radius = 0;
+    mesh.traverse((part) => {
+      const positions = part.geometry?.attributes.position;
+      if (!positions) return;
+      for (let i = 0; i < positions.count; i++) {
+        vertex.fromBufferAttribute(positions, i).applyMatrix4(part.matrixWorld);
+        radius = Math.max(radius, Math.hypot(vertex.x, vertex.z));
+      }
+    });
+    mesh.userData.coralRadius = radius + 0.025;
+    const base = new Box3().setFromObject(mesh.children[0] || mesh);
+    mesh.userData.coralBaseOffset = -base.min.y;
+    mesh.position.copy(originalPosition);
+    mesh.scale.copy(originalScale);
+  }
+
   // js/graphics/InvertebrateModels.js
   var mergeBufferGeometries2 = BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
   var IDS2 = /* @__PURE__ */ new Set([
@@ -33153,46 +33803,46 @@
     return mesh;
   }
   function shell(parent, elongated = false) {
-    const verts = [], colors = [], indices = [];
-    const turns = 3.1, samples = 160, sides = 20;
-    for (let i = 0; i <= samples; i++) {
-      const t = i / samples, a = t * Math.PI * 2 * turns;
-      const r = 0.012 + Math.pow(t, 1.8) * 0.12;
-      const thick = 6e-3 + Math.pow(t, 1.9) * 0.07;
-      const y = elongated ? (1 - t) * 0.24 : (1 - t) * 0.085;
+    const vertices = [], colors = [], indices = [];
+    const rings = 64, sides = 64;
+    const height = elongated ? 0.29 : 0.24;
+    for (let i = 0; i <= rings; i++) {
+      const t = i / rings;
+      const radius = Math.sin(Math.PI * t) * (elongated ? 0.15 * (1 - 0.55 * t) : 0.17 * (1 - 0.28 * t));
       for (let j = 0; j <= sides; j++) {
-        const b = j / sides * Math.PI * 2;
-        const ridge = 1 + 0.045 * Math.sin(t * 420);
-        verts.push(
-          Math.cos(a) * (r + Math.cos(b) * thick * ridge),
-          y + Math.sin(b) * thick,
-          Math.sin(a) * (r + Math.cos(b) * thick * ridge)
+        const angle = j / sides * Math.PI * 2;
+        const spiral = angle + t * Math.PI * (elongated ? 11 : 7);
+        const ribs = 1 + 0.035 * Math.cos(spiral * 2);
+        vertices.push(
+          Math.cos(angle) * radius * ribs,
+          t * height,
+          Math.sin(angle) * radius * ribs
         );
-        const stripe = (Math.sin(a * 5 + b * 3) > 0.45 ? 0.57 : 0.93) * (0.9 + 0.1 * Math.sin(t * 420));
-        colors.push(stripe, stripe * 0.77, stripe * 0.48);
-        if (i < samples && j < sides) {
+        const stripe = 0.66 + 0.24 * Math.cos(spiral) + 0.05 * Math.cos(angle * 19 + t * 70);
+        colors.push(stripe, stripe * 0.77, stripe * 0.49);
+        if (i < rings && j < sides) {
           const n = i * (sides + 1) + j;
           indices.push(
             n,
-            n + 1,
             n + sides + 1,
             n + 1,
-            n + sides + 2,
-            n + sides + 1
+            n + 1,
+            n + sides + 1,
+            n + sides + 2
           );
         }
       }
     }
     const geo = new BufferGeometry();
-    geo.setAttribute("position", new Float32BufferAttribute(verts, 3));
+    geo.setAttribute("position", new Float32BufferAttribute(vertices, 3));
     geo.setAttribute("color", new Float32BufferAttribute(colors, 3));
     geo.setIndex(indices);
     geo.computeVertexNormals();
     const material2 = mat(16777215);
     material2.vertexColors = true;
-    material2.side = DoubleSide;
     const mesh = new Mesh(geo, material2);
-    mesh.position.set(-0.055, elongated ? 0.1 : 0.14, 0);
+    mesh.position.set(-0.055, 0.055, 0);
+    mesh.userData.anatomicalPart = "shell";
     parent.add(mesh);
     return mesh;
   }
@@ -33210,7 +33860,7 @@
       [
         [0, 0, 0],
         [endX * 0.5, 0.01, side * 0.09],
-        [endX, -0.06, side * 0.15]
+        [endX, shrimp ? -0.09 : -0.06, side * 0.15]
       ],
       shrimp ? 4e-3 : 9e-3
     );
@@ -33245,6 +33895,14 @@
         [0.23, 0.035, 0.115]
       );
       root.userData.foot = foot;
+      const mantle = sphere2(
+        root,
+        flesh,
+        [-0.055, 0.085, 0],
+        [0.13, 0.07, 0.095]
+      );
+      mantle.userData.anatomicalPart = "mantle";
+      root.userData.mantle = mantle;
       shell(root, nassarius);
       sphere2(root, flesh, [0.17, 0.065, 0], [0.07, 0.045, 0.065]);
       for (const side of [-1, 1]) {
@@ -33415,7 +34073,7 @@
         bumps.forEach((g) => g.dispose());
       }
       for (const side of [-1, 1]) {
-        for (let i = 0; i < (hermit ? 3 : 4); i++)
+        for (let i = 0; i < (hermit ? 2 : 4); i++)
           limb(root, i % 2 ? joint : armor, side, i);
         tube(
           root,
@@ -33477,13 +34135,27 @@
         root.userData.claws.push(finger);
       }
     }
+    root.updateMatrixWorld(true);
+    const base = new Box3().setFromObject(root).min.y;
+    for (const child of root.children) child.position.y -= base;
+    if (id === "nassariusSnail") {
+      const burrowGroup = new Group();
+      for (const child of [...root.children]) burrowGroup.add(child);
+      root.add(burrowGroup);
+      root.userData.burrowGroup = burrowGroup;
+    }
     return root;
   }
-  function animateInvertebrateModel(mesh, animal, timeSeconds) {
+  function animateInvertebrateModel(mesh, animal, timeSeconds, delta = 1 / 60) {
     if (animal.alive === false) return;
+    if (mesh.userData.burrowGroup) {
+      const target = -(mesh.userData.burrowDepth || 0);
+      mesh.userData.burrowGroup.position.y += (target - mesh.userData.burrowGroup.position.y) * (1 - Math.exp(-2 * Math.max(0, delta)));
+    }
+    const stride = mesh.userData.swimSpeed === void 0 ? 1 : Math.min(1, mesh.userData.swimSpeed / 0.035);
     for (const leg of mesh.userData.legs || []) {
-      leg.group.rotation.y = Math.sin(timeSeconds * 4 + leg.phase) * 0.13;
-      leg.group.rotation.x = Math.cos(timeSeconds * 4 + leg.phase) * 0.09;
+      leg.group.rotation.y = Math.sin(timeSeconds * 4 + leg.phase) * 0.13 * stride;
+      leg.group.rotation.x = Math.cos(timeSeconds * 4 + leg.phase) * 0.04 * stride;
     }
     (mesh.userData.feelers || []).forEach((feeler, i) => {
       feeler.rotation.y = Math.sin(timeSeconds * 1.2 + i * 1.8) * 0.18;
@@ -33499,8 +34171,8 @@
   }
 
   // js/graphics/LivestockRenderer.js
-  var clamp2 = (value, min, max) => Math.max(min, Math.min(max, value));
-  var finite = (value, fallback) => Number.isFinite(value) ? value : fallback;
+  var clamp4 = (value, min, max) => Math.max(min, Math.min(max, value));
+  var finite2 = (value, fallback2) => Number.isFinite(value) ? value : fallback2;
   var blend = (rate, delta) => 1 - Math.exp(-rate * delta);
   var phaseFor = (id) => {
     let hash = 2166136261;
@@ -33536,7 +34208,7 @@
       };
       return aliases[String(templateId).toLowerCase()] || String(templateId);
     }
-    static createFishMesh(fish) {
+    static createFishMesh(fish, context = null, time = 0) {
       const id = this.resolveTemplateId(fish.templateId);
       const mesh = createFishModel(fish, id) || new Group();
       Object.assign(mesh.userData, {
@@ -33548,29 +34220,55 @@
         turnRate: 0
       });
       mesh.position.set(
-        (finite(fish.x, 0.5) - 0.5) * 5,
-        (finite(fish.y, 0.5) - 0.5) * 2.2,
-        (finite(fish.z, 0.5) - 0.5) * 2.2
+        (finite2(fish.x, 0.5) - 0.5) * 5,
+        (finite2(fish.y, 0.5) - 0.5) * 2.2,
+        (finite2(fish.z, 0.5) - 0.5) * 2.2
       );
+      if (context) {
+        const surfaceHeight = context.surfaceHeight || ((x, z) => habitatHeight(context.habitat, x, z));
+        const target = fishTarget(fish, time * 1e-3, surfaceHeight, context.habitat);
+        mesh.position.set(target.x, target.y, target.z);
+        advanceFishMotion(mesh, fish, time * 1e-3, 1 / 60, context);
+      }
       mesh.rotation.order = "YXZ";
       return mesh;
     }
-    static updateFishAnimation(mesh, fish, time, delta = 1 / 60) {
+    static updateFishAnimation(mesh, fish, time, delta = 1 / 60, context = null) {
       if (!mesh || !fish) return;
-      const dt = clamp2(finite(delta, 1 / 60), 0, 0.1);
-      const seconds = finite(time, 0) * 1e-3;
+      const dt = clamp4(finite2(delta, 1 / 60), 0, 0.1);
+      const seconds = finite2(time, 0) * 1e-3;
       const id = this.resolveTemplateId(fish.templateId);
       const data = mesh.userData;
       data.animationPhase ??= phaseFor(fish.id);
+      data.dead = fish.alive === false;
+      if (dt === 0) return;
       if (fish.alive === false) {
         mesh.position.y = Math.max(-1.12, mesh.position.y - 0.16 * dt);
         mesh.rotation.x += angleDelta(Math.PI, mesh.rotation.x) * blend(2, dt);
         data.swimSpeed = 0;
         return;
       }
-      const targetX = (clamp2(finite(fish.x, 0.5), 0.04, 0.96) - 0.5) * 5;
-      const targetY = (clamp2(finite(fish.y, 0.5), 0.04, 0.96) - 0.5) * 2.2;
-      const targetZ = (clamp2(finite(fish.z, 0.5), 0.04, 0.96) - 0.5) * 2.2;
+      if (context) {
+        const oldX = mesh.position.x, oldY = mesh.position.y, oldZ = mesh.position.z;
+        advanceFishMotion(mesh, fish, seconds, dt, context);
+        const dx2 = mesh.position.x - oldX, dy2 = mesh.position.y - oldY, dz2 = mesh.position.z - oldZ;
+        const speed2 = Math.hypot(dx2, dy2, dz2) / dt;
+        data.swimSpeed = finite2(data.swimSpeed, 0) + (speed2 - finite2(data.swimSpeed, 0)) * blend(6, dt);
+        let turn2 = 0;
+        if (Math.hypot(dx2, dz2) > 1e-4) {
+          turn2 = angleDelta(Math.atan2(-dz2, dx2), mesh.rotation.y);
+          mesh.rotation.y += turn2 * blend(id === "sixLineWrasse" ? 8 : 4, dt);
+        }
+        data.turnRate = turn2;
+        const pitch2 = speed2 > 0.015 ? clamp4(Math.atan2(dy2, Math.hypot(dx2, dz2)), -0.35, 0.35) : 0;
+        mesh.rotation.z += (pitch2 - mesh.rotation.z) * blend(4, dt);
+        mesh.rotation.x += (clamp4(-turn2 * speed2 * 0.24, -0.32, 0.32) - mesh.rotation.x) * blend(5, dt);
+        animateFishModel(mesh, fish, seconds, dt);
+        return;
+      }
+      const targetX = (clamp4(finite2(fish.x, 0.5), 0.04, 0.96) - 0.5) * 5;
+      const targetY = (clamp4(finite2(fish.y, 0.5), 0.04, 0.96) - 0.5) * 2.2;
+      const targetZ = (clamp4(finite2(fish.z, 0.5), 0.04, 0.96) - 0.5) * 2.2;
       const dx = targetX - mesh.position.x;
       const dy = targetY - mesh.position.y;
       const dz = targetZ - mesh.position.z;
@@ -33581,15 +34279,15 @@
       mesh.position.y += dy * move;
       mesh.position.z += dz * move;
       const speed = dt > 0 ? distance * move / dt : 0;
-      data.swimSpeed = finite(data.swimSpeed, 0) + (speed - finite(data.swimSpeed, 0)) * blend(6, dt);
+      data.swimSpeed = finite2(data.swimSpeed, 0) + (speed - finite2(data.swimSpeed, 0)) * blend(6, dt);
       let turn = 0;
       if (Math.hypot(dx, dz) > 4e-3) {
         turn = angleDelta(Math.atan2(-dz, dx), mesh.rotation.y);
         mesh.rotation.y += turn * blend(id === "sixLineWrasse" ? 8 : 4, dt);
       }
       data.turnRate = turn;
-      const pitch = distance > 8e-3 ? clamp2(Math.atan2(dy, Math.hypot(dx, dz)), -0.35, 0.35) : 0;
-      const bank = clamp2(-turn * data.swimSpeed * 0.24, -0.32, 0.32);
+      const pitch = distance > 8e-3 ? clamp4(Math.atan2(dy, Math.hypot(dx, dz)), -0.35, 0.35) : 0;
+      const bank = clamp4(-turn * data.swimSpeed * 0.24, -0.32, 0.32);
       mesh.rotation.z += (pitch - mesh.rotation.z) * blend(4, dt);
       mesh.rotation.x += (bank - mesh.rotation.x) * blend(5, dt);
       animateFishModel(mesh, fish, seconds, dt);
@@ -33605,12 +34303,13 @@
         animationPhase: phase
       });
       mesh.position.set(
-        finite(coral.x, Math.sin(phase) * 1.6),
-        finite(coral.y, -1.15),
-        finite(coral.z, Math.cos(phase) * 0.7)
+        finite2(coral.x, Math.sin(phase) * 1.6),
+        finite2(coral.y, -1.15),
+        finite2(coral.z, Math.cos(phase) * 0.7)
       );
       mesh.rotation.y = phase;
-      mesh.scale.setScalar(clamp2(finite(coral.scale, 1), 0.4, 1.6));
+      mesh.scale.setScalar(clamp4(finite2(coral.scale, 1), 0.4, 1.6));
+      measureCoralMount(mesh);
       return mesh;
     }
     static updateCoralAnimation(mesh, coral, time, delta = 1 / 60) {
@@ -33618,11 +34317,11 @@
       animateCoralModel(
         mesh,
         coral,
-        finite(time, 0) * 1e-3,
-        clamp2(finite(delta, 1 / 60), 0, 0.1)
+        finite2(time, 0) * 1e-3,
+        clamp4(finite2(delta, 1 / 60), 0, 0.1)
       );
     }
-    static createCleanupMesh(animal) {
+    static createCleanupMesh(animal, context = {}) {
       const id = this.resolveTemplateId(animal.templateId);
       const mesh = createInvertebrateModel(animal, id) || new Group();
       Object.assign(mesh.userData, {
@@ -33632,32 +34331,84 @@
         animationPhase: phaseFor(animal.id),
         swimSpeed: 0
       });
-      this.updateCleanupAnimation(mesh, animal, 0, 0);
+      mesh.scale.setScalar(0.58);
+      this.updateCleanupAnimation(mesh, animal, 0, 0, context);
       return mesh;
     }
-    static updateCleanupAnimation(mesh, animal, time, delta = 1 / 60) {
+    static updateCleanupAnimation(mesh, animal, time, delta = 1 / 60, context = {}) {
       if (!mesh || !animal) return;
-      const seconds = finite(time, 0) * 1e-3;
-      const phase = mesh.userData.animationPhase ?? phaseFor(animal.id);
-      const id = this.resolveTemplateId(animal.templateId);
-      const isSnail = id === "turboSnail" || id === "nassariusSnail";
-      const isShrimp = id === "cleanerShrimp" || id === "peppermintShrimp";
-      const rate = isSnail ? 9e-3 : isShrimp ? 0.035 : 0.019;
-      const t = seconds * rate + phase;
-      const radius = 1.4 + 0.65 * Math.abs(Math.sin(phase * 3));
-      mesh.position.set(
-        Math.sin(t) * radius,
-        -1.15,
-        0.86 + Math.cos(t) * 0.22
-      );
-      mesh.rotation.y = Math.atan2(Math.sin(t) * 0.22, Math.cos(t) * radius);
-      mesh.userData.swimSpeed = rate * Math.hypot(Math.cos(t) * radius, Math.sin(t) * 0.22);
+      updateCleanupMotion(mesh, animal, delta, context);
       animateInvertebrateModel(
         mesh,
         animal,
-        seconds,
-        clamp2(finite(delta, 1 / 60), 0, 0.1)
+        finite2(time, 0) * 1e-3,
+        clamp4(finite2(delta, 1 / 60), 0, 0.1)
       );
+    }
+  };
+
+  // js/graphics/Habitat.js
+  function getHabitat(scene, state) {
+    const environment = scene.userData.tankEnvironmentGroup;
+    const cached2 = scene.userData.livestockHabitat;
+    if (cached2 && cached2.environment === environment) return cached2;
+    const habitat = new Habitat(environment, state);
+    scene.userData.livestockHabitat = habitat;
+    return habitat;
+  }
+  var Habitat = class {
+    constructor(environment, state = {}) {
+      this.environment = environment;
+      this.bounds = { minX: -2.85, maxX: 2.85, minZ: -1.35, maxZ: 1.35 };
+      this.floorY = -1.48;
+      this.floorType = "bottom";
+      this.rocks = [];
+      this.ray = new Raycaster(
+        new Vector3(),
+        new Vector3(0, -1, 0)
+      );
+      this.normalMatrix = new Matrix3();
+      this.coralScale = state.tankSize === "large" ? 0.52 : state.tankSize === "nano" ? 0.9 : 0.7;
+      environment?.updateMatrixWorld(true);
+      environment?.traverse((object) => {
+        if (object.userData.type === "sand") {
+          this.floorY = new Box3().setFromObject(object).max.y;
+          this.floorType = "sand";
+        }
+        if (object.isMesh && object.parent?.userData.type === "rocks")
+          this.rocks.push(object);
+      });
+      this.rockPoints = [];
+      this.candidates = [];
+      for (let iz = 0; iz < 15; iz++) {
+        for (let ix = 0; ix < 29; ix++) {
+          const p = this.sample(-2.65 + ix * 0.19, -1.16 + iz * 0.165);
+          this.candidates.push(p);
+          if (p.type === "rock" && p.normal.y > 0.75)
+            this.rockPoints.push(p);
+        }
+      }
+    }
+    sample(x, z, { sandOnly = false } = {}) {
+      const floor = {
+        x,
+        y: this.floorY,
+        z,
+        type: this.floorType,
+        normal: new Vector3(0, 1, 0)
+      };
+      if (sandOnly || !this.rocks.length) return floor;
+      this.ray.set(new Vector3(x, 2.5, z), new Vector3(0, -1, 0));
+      const hit = this.ray.intersectObjects(this.rocks, false)[0];
+      if (!hit || hit.point.y <= this.floorY) return floor;
+      this.normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+      return {
+        x,
+        y: hit.point.y,
+        z,
+        type: "rock",
+        normal: hit.face.normal.clone().applyMatrix3(this.normalMatrix).normalize()
+      };
     }
   };
 
@@ -33861,10 +34612,21 @@ void main() {
         0.05
       );
       this._lastFrameTime = now2;
+      const wildlifeDelta = state.paused ? 0 : delta;
+      this._wildlifeTime = (this._wildlifeTime || 0) + wildlifeDelta * 1e3;
+      const wildlifeTime = this._wildlifeTime;
       this.waterUniforms.uTime.value = now2 * 1e-3;
       this.shaftUniforms.uTime.value = now2 * 1e-3;
       if (this.controls) this.controls.update();
       TankBuilder.buildEnvironment(this.scene, state);
+      const habitat = getHabitat(this.scene, state);
+      this._wildlifeContext = {
+        habitat,
+        state,
+        fishMeshes: this.fishMeshes,
+        coralMeshes: this.coralMeshes,
+        cleanupMeshes: this.cleanupMeshes
+      };
       const caustics = TextureGenerator_default.causticsTexture();
       caustics.offset.set(now2 * 18e-6, now2 * 11e-6);
       const hasLight = state.equipment.lightOn && (state.equipment.lightBasic || state.equipment.lightReef);
@@ -33895,11 +34657,21 @@ void main() {
       state.livestock.forEach((fish) => {
         let mesh = this.fishMeshes.get(fish.id);
         if (!mesh) {
-          mesh = LivestockRenderer.createFishMesh(fish);
+          mesh = LivestockRenderer.createFishMesh(
+            fish,
+            this._wildlifeContext,
+            wildlifeTime
+          );
           this.scene.add(mesh);
           this.fishMeshes.set(fish.id, mesh);
         }
-        LivestockRenderer.updateFishAnimation(mesh, fish, now2, delta);
+        LivestockRenderer.updateFishAnimation(
+          mesh,
+          fish,
+          wildlifeTime,
+          wildlifeDelta,
+          this._wildlifeContext
+        );
       });
       for (let id of this.fishMeshes.keys()) {
         const fishExists = fishIds.has(id);
@@ -33920,7 +34692,12 @@ void main() {
           this.scene.add(mesh);
           this.coralMeshes.set(coral.id, mesh);
         }
-        LivestockRenderer.updateCoralAnimation(mesh, coral, now2, delta);
+        LivestockRenderer.updateCoralAnimation(
+          mesh,
+          coral,
+          wildlifeTime,
+          wildlifeDelta
+        );
       });
       for (let id of this.coralMeshes.keys()) {
         const coralExists = coralIds.has(id);
@@ -33933,6 +34710,7 @@ void main() {
           }
         }
       }
+      syncCoralPlacements(state.corals, this.coralMeshes, habitat);
       const cleanupIds = /* @__PURE__ */ new Set();
       for (const crew of state.cleanupCrew || []) {
         for (let index = 0; index < crew.count; index++) {
@@ -33947,15 +34725,19 @@ void main() {
             alive: true
           };
           if (!mesh) {
-            mesh = LivestockRenderer.createCleanupMesh(animal);
+            mesh = LivestockRenderer.createCleanupMesh(
+              animal,
+              this._wildlifeContext
+            );
             this.cleanupMeshes.set(id, mesh);
             this.scene.add(mesh);
           }
           LivestockRenderer.updateCleanupAnimation(
             mesh,
             animal,
-            now2,
-            delta
+            wildlifeTime,
+            wildlifeDelta,
+            this._wildlifeContext
           );
         }
       }
@@ -34314,7 +35096,7 @@ void main() {
                 <span class="maint-cooldown">Salinity: ${state.water.salinity.toFixed(1)} ppt</span>
             </button>
             <button class="maint-btn" id="btnFeedFish">
-                \u{1F37D} Feed Fish
+                \u{1F37D} Feed Livestock
                 <span class="maint-cooldown">Today: ${state.feedingsToday}\xD7 ${state.lastFed === state.day ? "\u2705" : ""}</span>
             </button>
         `;
@@ -34362,7 +35144,7 @@ void main() {
       const livesSig = state.livestock.length + "|" + state.corals.length + "|" + state.livestock.map((f) => f.id + ":" + f.alive).join(",") + "|" + state.corals.map((c) => c.id + ":" + Math.round(c.health)).join(",") + "|" + state.livestock.map((f) => Math.round(f.health)).join(",") + "|" + (state.cleanupCrew || []).map((c) => c.id + ":" + c.count).join(",");
       if (livesSig === this._lastLivestockSig) return;
       this._lastLivestockSig = livesSig;
-      let html = '<div class="store-category">\u{1F420} Fish Store</div>';
+      let html = '<p class="store-item-desc">Observe where each animal swims, rests and feeds. Plan shelter, swimming room, diet and coral spacing before stocking. These animated behaviors illustrate habitat use; disease, aggression, food populations and coral stinging are not fully simulated.</p><div class="store-category">\u{1F420} Fish Store</div>';
       FISH_DATABASE.forEach((fish) => {
         html += `
             <div class="store-item" data-action="buy-fish" data-id="${fish.id}">
@@ -34371,6 +35153,7 @@ void main() {
                     <div class="store-item-price">$${fish.price}</div>
                 </div>
                 <div class="store-item-desc">${fish.desc}</div>
+                <div class="store-item-desc"><strong>Care:</strong> ${fish.care}</div>
             </div>`;
       });
       if (state.livestock.length > 0) {
@@ -34395,6 +35178,7 @@ void main() {
                     <div class="store-item-price">$${coral.price}</div>
                 </div>
                 <div class="store-item-desc">${coral.desc}</div>
+                <div class="store-item-desc"><strong>Care:</strong> ${coral.care}</div>
             </div>`;
       });
       if (state.corals.length > 0) {
@@ -34417,6 +35201,7 @@ void main() {
                 <div class="store-item-top"><div class="store-item-name">${crew.icon} ${crew.name}</div>
                 <div class="store-item-price">$${crew.price}</div></div>
                 <div class="store-item-desc">${crew.desc}</div>
+                <div class="store-item-desc"><strong>Care:</strong> ${crew.care}</div>
                 <div class="store-item-desc">Pack: ${crew.count} \xB7 In tank: ${owned}</div></div>`;
       }
       this.updateHTML("tab-livestock", html);
@@ -34859,7 +35644,11 @@ void main() {
       this.render();
     }
     feedFish() {
-      if (this.state.livestock.length === 0) {
+      const hasFish = this.state.livestock.some((fish) => fish.alive);
+      const hasCleanup = this.state.cleanupCrew.some(
+        (crew) => crew.count > 0
+      );
+      if (!hasFish && !hasCleanup) {
         if (!this.state.cycleComplete && this.state.cycleDay > 0) {
           this.state.water.ammonia += 0.3;
           this.state.ghostFedForCycle = true;
@@ -34873,7 +35662,7 @@ void main() {
             "info"
           );
         } else {
-          UIController.showToast("No fish to feed!", "warning");
+          UIController.showToast("No livestock to feed!", "warning");
         }
         this.render();
         return;
@@ -34895,14 +35684,14 @@ void main() {
         this.readKnowledge("feeding");
       } else {
         this.state.livestock.forEach((f) => {
-          f.health = Math.min(100, f.health + 0.5);
+          if (f.alive) f.health = Math.min(100, f.health + 0.5);
         });
         this.state.journal.push({
           time: `Day ${this.state.day} ${this.state.hour}:00`,
-          text: `\u{1F37D} Fed the fish. They seem happy!`,
-          tip: `In real reefkeeping, feed 1-2 times daily with a variety of frozen and dry foods.`
+          text: `\u{1F37D} Fed the livestock.`,
+          tip: `Match food to each species: algae for grazers and suitable meaty foods for scavengers. Observe consumption and avoid excess.`
         });
-        UIController.showToast("\u{1F37D} Fish fed!", "success");
+        UIController.showToast("\u{1F37D} Livestock fed!", "success");
         this.readKnowledge("feeding");
       }
       this.render();

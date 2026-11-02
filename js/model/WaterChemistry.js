@@ -2,6 +2,8 @@
 // REALISTIC WATER CHEMISTRY & BIOLOGICAL SIMULATION
 // =========================================
 
+import { CLEANUP_DATABASE } from './StoreService.js';
+
 export class WaterChemistry {
     static tick(state, hoursPassed = 1) {
         const w = state.water;
@@ -112,8 +114,15 @@ export class WaterChemistry {
         // Cleanup crew algae consumption
         let algaeReduced = 0;
         state.cleanupCrew.forEach((crew) => {
+            // Use current species diets for older saves too; zero is intentional.
+            const species = CLEANUP_DATABASE.find(
+                (c) => c.id === crew.templateId
+            );
             algaeReduced +=
-                (crew.algaeReduce || 0.5) * crew.count * 0.1 * hoursPassed;
+                (species?.algaeReduce ?? crew.algaeReduce ?? 0.5) *
+                crew.count *
+                0.1 *
+                hoursPassed;
         });
         state.algaeLevel = Math.max(0, state.algaeLevel - algaeReduced);
 

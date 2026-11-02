@@ -37,10 +37,10 @@ describe('wildlife motion', () => {
         const animal = { id: '1:2', templateId: 'turboSnail', alive: true };
         for (let t = 0; t < 3600000; t += 1000) {
             LivestockRenderer.updateCleanupAnimation(mesh, animal, t, 1 / 60);
-            expect(Math.abs(mesh.position.x)).toBeLessThanOrEqual(2.05);
-            expect(mesh.position.y).toBe(-1.15);
-            expect(mesh.position.z).toBeGreaterThanOrEqual(0.64);
-            expect(mesh.position.z).toBeLessThanOrEqual(1.08);
+            expect(Math.abs(mesh.position.x)).toBeLessThanOrEqual(2.94);
+            expect(mesh.position.y).toBeGreaterThanOrEqual(-1.15);
+            expect(mesh.position.y).toBeLessThanOrEqual(1.12);
+            expect(Math.abs(mesh.position.z)).toBeLessThanOrEqual(1.25);
         }
     });
     it('pulses xenia and moves shrimp appendages without moving model roots', () => {

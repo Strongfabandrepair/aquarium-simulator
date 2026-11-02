@@ -441,7 +441,11 @@ export class GameEngine {
     }
 
     feedFish() {
-        if (this.state.livestock.length === 0) {
+        const hasFish = this.state.livestock.some((fish) => fish.alive);
+        const hasCleanup = this.state.cleanupCrew.some(
+            (crew) => crew.count > 0
+        );
+        if (!hasFish && !hasCleanup) {
             if (!this.state.cycleComplete && this.state.cycleDay > 0) {
                 // Ghost feeding for cycle
                 this.state.water.ammonia += 0.3;
@@ -456,7 +460,7 @@ export class GameEngine {
                     'info'
                 );
             } else {
-                UIController.showToast('No fish to feed!', 'warning');
+                UIController.showToast('No livestock to feed!', 'warning');
             }
             this.render();
             return;
@@ -481,14 +485,14 @@ export class GameEngine {
         } else {
             // Heal fish slightly from feeding
             this.state.livestock.forEach((f) => {
-                f.health = Math.min(100, f.health + 0.5);
+                if (f.alive) f.health = Math.min(100, f.health + 0.5);
             });
             this.state.journal.push({
                 time: `Day ${this.state.day} ${this.state.hour}:00`,
-                text: `🍽 Fed the fish. They seem happy!`,
-                tip: `In real reefkeeping, feed 1-2 times daily with a variety of frozen and dry foods.`
+                text: `🍽 Fed the livestock.`,
+                tip: `Match food to each species: algae for grazers and suitable meaty foods for scavengers. Observe consumption and avoid excess.`
             });
-            UIController.showToast('🍽 Fish fed!', 'success');
+            UIController.showToast('🍽 Livestock fed!', 'success');
             this.readKnowledge('feeding');
         }
         this.render();

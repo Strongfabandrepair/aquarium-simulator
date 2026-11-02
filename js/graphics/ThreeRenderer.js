@@ -6,6 +6,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TankBuilder } from './TankBuilder.js';
 import { LivestockRenderer } from './LivestockRenderer.js';
+import { getHabitat } from './Habitat.js';
+import { syncCoralPlacements } from './CoralPlacement.js';
 import TextureGenerator from './TextureGenerator.js';
 
 const WATER_VERT = `
@@ -241,6 +243,9 @@ export class ThreeRenderer {
             0.05
         );
         this._lastFrameTime = now;
+        const wildlifeDelta = state.paused ? 0 : delta;
+        this._wildlifeTime = (this._wildlifeTime || 0) + wildlifeDelta * 1000;
+        const wildlifeTime = this._wildlifeTime;
         this.waterUniforms.uTime.value = now * 0.001;
         this.shaftUniforms.uTime.value = now * 0.001;
 
@@ -248,6 +253,14 @@ export class ThreeRenderer {
 
         // 1. Rebuild equipment & environment if updated
         TankBuilder.buildEnvironment(this.scene, state);
+        const habitat = getHabitat(this.scene, state);
+        this._wildlifeContext = {
+            habitat,
+            state,
+            fishMeshes: this.fishMeshes,
+            coralMeshes: this.coralMeshes,
+            cleanupMeshes: this.cleanupMeshes
+        };
         const caustics = TextureGenerator.causticsTexture();
         caustics.offset.set(now * 0.000018, now * 0.000011);
 
@@ -286,11 +299,21 @@ export class ThreeRenderer {
         state.livestock.forEach((fish) => {
             let mesh = this.fishMeshes.get(fish.id);
             if (!mesh) {
-                mesh = LivestockRenderer.createFishMesh(fish);
+                mesh = LivestockRenderer.createFishMesh(
+                    fish,
+                    this._wildlifeContext,
+                    wildlifeTime
+                );
                 this.scene.add(mesh);
                 this.fishMeshes.set(fish.id, mesh);
             }
-            LivestockRenderer.updateFishAnimation(mesh, fish, now, delta);
+            LivestockRenderer.updateFishAnimation(
+                mesh,
+                fish,
+                wildlifeTime,
+                wildlifeDelta,
+                this._wildlifeContext
+            );
         });
 
         // Remove deleted fish meshes
@@ -315,7 +338,12 @@ export class ThreeRenderer {
                 this.scene.add(mesh);
                 this.coralMeshes.set(coral.id, mesh);
             }
-            LivestockRenderer.updateCoralAnimation(mesh, coral, now, delta);
+            LivestockRenderer.updateCoralAnimation(
+                mesh,
+                coral,
+                wildlifeTime,
+                wildlifeDelta
+            );
         });
 
         // Remove deleted coral meshes
@@ -330,6 +358,8 @@ export class ThreeRenderer {
                 }
             }
         }
+
+        syncCoralPlacements(state.corals, this.coralMeshes, habitat);
 
         // Cleanup purchases are cohorts; render each individual with a stable identity.
         const cleanupIds = new Set();
@@ -346,15 +376,19 @@ export class ThreeRenderer {
                     alive: true
                 };
                 if (!mesh) {
-                    mesh = LivestockRenderer.createCleanupMesh(animal);
+                    mesh = LivestockRenderer.createCleanupMesh(
+                        animal,
+                        this._wildlifeContext
+                    );
                     this.cleanupMeshes.set(id, mesh);
                     this.scene.add(mesh);
                 }
                 LivestockRenderer.updateCleanupAnimation(
                     mesh,
                     animal,
-                    now,
-                    delta
+                    wildlifeTime,
+                    wildlifeDelta,
+                    this._wildlifeContext
                 );
             }
         }

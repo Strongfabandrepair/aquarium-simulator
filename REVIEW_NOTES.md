@@ -1,3 +1,5 @@
+Current habitat and behavior update: see [HABITAT_GUIDE.md](HABITAT_GUIDE.md) for continuous swimming, supported coral placement, cleanup anatomy/foraging, species-care guidance, references and simulation limits. [SMOKE_TEST_REPORT.md](SMOKE_TEST_REPORT.md) records verification. Earlier plans and session entries below are historical.
+
 See [SMOKE_TEST_REPORT.md](SMOKE_TEST_REPORT.md) for the November 2 full-flow smoke tests and resulting reliability fixes.
 
 <!-- Wildlife rendering update: 2026-11-02 -->
