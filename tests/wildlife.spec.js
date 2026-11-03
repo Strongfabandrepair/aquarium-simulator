@@ -20,6 +20,12 @@ for (const category of ['Fish', 'Corals', 'Cleanup']) {
             if (m.type() === 'error') errors.push(m.text());
         });
         await page.setViewportSize({ width: 1600, height: 900 });
+        await page.route('**/artifacts/wildlife-harness.js', (route) =>
+            route.fulfill({
+                path: 'artifacts/wildlife-harness.js',
+                contentType: 'text/javascript'
+            })
+        );
         await page.goto('/');
         const results = await page.evaluate(async (category) => {
             const harness = await import('/artifacts/wildlife-harness.js');

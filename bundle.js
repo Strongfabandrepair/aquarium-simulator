@@ -248,6 +248,144 @@
     return null;
   }
 
+  // js/persistence/ProfilePersistence.js
+  var revision = 0;
+  var enabled = false;
+  var queue = Promise.resolve();
+  var key = "reefSimProfiles";
+  var activeKey = "reefSimActiveProfile";
+  var pendingKey = "reefSimPendingSync";
+  function status(text) {
+    const element = document.getElementById("saveStatus");
+    if (element) element.textContent = text;
+  }
+  function localProfiles() {
+    try {
+      return JSON.parse(localStorage.getItem(key) || "{}") || {};
+    } catch {
+      return {};
+    }
+  }
+  function payload() {
+    return {
+      profiles: localProfiles(),
+      active: localStorage.getItem(activeKey) || "Guest",
+      revision
+    };
+  }
+  async function write(value) {
+    const response = await globalThis.fetch("/api/profiles", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...value, revision }),
+      keepalive: false,
+      signal: globalThis.AbortSignal.timeout(6e4)
+    });
+    if (!response.ok)
+      throw new Error(
+        response.status === 409 ? "Conflict \u2014 local backup retained" : "Database unavailable \u2014 local backup retained"
+      );
+    revision = (await response.json()).revision;
+  }
+  async function initializePersistence() {
+    try {
+      const response = await globalThis.fetch("/api/profiles", {
+        signal: globalThis.AbortSignal.timeout(2500)
+      });
+      if (!response.ok) return;
+      const remote = await response.json();
+      if (!remote.profiles || !Number.isSafeInteger(remote.revision)) return;
+      revision = remote.revision;
+      enabled = true;
+      const local = localProfiles(), merged = { ...remote.profiles };
+      const pending = Boolean(localStorage.getItem(pendingKey));
+      const active = pending ? localStorage.getItem(activeKey) || remote.active : remote.profiles[remote.active] ? remote.active : localStorage.getItem(activeKey) || "Guest";
+      if (!localStorage.getItem("reefSimMigrated") || localStorage.getItem(pendingKey) || !Object.keys(remote.profiles).length && Object.keys(local).length) {
+        for (const [name, snapshot] of Object.entries(local)) {
+          if (!merged[name]) merged[name] = snapshot;
+          else if (JSON.stringify(merged[name]) !== JSON.stringify(snapshot)) {
+            if (pending && (snapshot.lastSaved || 0) >= (merged[name].lastSaved || 0)) {
+              let baseRevision;
+              try {
+                baseRevision = JSON.parse(
+                  localStorage.getItem(pendingKey)
+                ).baseRevision;
+              } catch {
+              }
+              if (baseRevision !== remote.revision) {
+                let backup = `${name.slice(0, 70)} (server backup)`, index = 2;
+                while (merged[backup])
+                  backup = `${name.slice(0, 70)} (server backup ${index++})`;
+                merged[backup] = {
+                  ...merged[name],
+                  profileName: backup
+                };
+              }
+              merged[name] = snapshot;
+              continue;
+            }
+            let copy = `${name.slice(0, 70)} (local backup)`, n = 2;
+            while (merged[copy])
+              copy = `${name.slice(0, 70)} (local backup ${n++})`;
+            merged[copy] = { ...snapshot, profileName: copy };
+          }
+        }
+        await write({
+          profiles: merged,
+          active
+        });
+      }
+      if (Object.keys(merged).length)
+        localStorage.setItem(key, JSON.stringify(merged));
+      else localStorage.removeItem(key);
+      localStorage.setItem(activeKey, active);
+      localStorage.setItem("reefSimMigrated", "1");
+      localStorage.removeItem(pendingKey);
+    } catch {
+      enabled = false;
+    }
+  }
+  function schedulePersistence() {
+    const marker = JSON.stringify({
+      baseRevision: revision,
+      token: `${Date.now()}-${Math.random()}`
+    });
+    localStorage.setItem(pendingKey, marker);
+    if (!enabled) {
+      status("Saved locally");
+      return Promise.resolve(false);
+    }
+    status("Saving\u2026");
+    const value = payload();
+    queue = queue.then(async () => {
+      try {
+        await write(value);
+        if (localStorage.getItem(pendingKey) === marker)
+          localStorage.removeItem(pendingKey);
+        status("Saved");
+        return true;
+      } catch (error) {
+        status(error.message);
+        return false;
+      }
+    });
+    return queue;
+  }
+  function flushPersistence() {
+    return queue;
+  }
+  async function clearPersistence() {
+    await queue;
+    if (!enabled && localStorage.getItem("reefSimMigrated"))
+      throw new Error("Database unavailable");
+    if (enabled) {
+      await write({ profiles: {}, active: "Guest" });
+    }
+    localStorage.removeItem(key);
+    localStorage.removeItem(activeKey);
+    localStorage.removeItem(pendingKey);
+  }
+
   // js/engine/GameState.js
   var PROFILES_STORAGE_KEY = "reefSimProfiles";
   var ACTIVE_PROFILE_KEY = "reefSimActiveProfile";
@@ -489,12 +627,14 @@
     }
     static saveProfiles(profiles) {
       localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+      schedulePersistence();
     }
     static getActiveProfileName() {
       return localStorage.getItem(ACTIVE_PROFILE_KEY) || "Guest";
     }
     static setActiveProfileName(name) {
       localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+      schedulePersistence();
     }
   };
 
@@ -734,13 +874,13 @@
     const species = getSpecies(animal.templateId);
     const adult = species?.adultLengthM || (kind === "coral" ? 0.2 : 0.1);
     const juvenile = species?.juvenileLengthM || adult * 0.5;
-    const key = kind === "coral" ? "diameterM" : "lengthM";
+    const key2 = kind === "coral" ? "diameterM" : "lengthM";
     if (!Number.isFinite(animal.growthProgress)) {
-      const fraction = Number.isFinite(animal[key]) ? Math.max(
+      const fraction = Number.isFinite(animal[key2]) ? Math.max(
         0,
         Math.min(
           1,
-          (animal[key] - juvenile) / Math.max(1e-3, adult - juvenile)
+          (animal[key2] - juvenile) / Math.max(1e-3, adult - juvenile)
         )
       ) : 0;
       animal.growthProgress = 1 - Math.sqrt(1 - fraction);
@@ -748,7 +888,7 @@
     animal.ageDays ??= Math.max(0, state.day - (animal.addedDay ?? state.day));
     animal.growthProgress = Math.max(0, Math.min(1, animal.growthProgress));
     const matureSize = juvenile + (adult - juvenile) * (1 - Math.pow(1 - animal.growthProgress, 2));
-    animal[key] = Number.isFinite(animal[key]) ? Math.max(juvenile, Math.min(adult, animal[key])) : matureSize;
+    animal[key2] = Number.isFinite(animal[key2]) ? Math.max(juvenile, Math.min(adult, animal[key2])) : matureSize;
     animal.lastMealDay ??= Math.max(
       state.lastFed || 0,
       animal.addedDay ?? state.day
@@ -834,14 +974,14 @@
     }
   }
   function removeDeadLivestock(state, kind, id) {
-    const key = { fish: "livestock", coral: "corals", cleanup: "cleanupCrew" }[kind];
-    if (!key) return false;
-    const index = state[key].findIndex(
+    const key2 = { fish: "livestock", coral: "corals", cleanup: "cleanupCrew" }[kind];
+    if (!key2) return false;
+    const index = state[key2].findIndex(
       (animal2) => String(animal2.id) === String(id)
     );
-    const animal = state[key][index];
+    const animal = state[key2][index];
     if (!animal || animal.alive !== false && animal.health > 0) return false;
-    state[key].splice(index, 1);
+    state[key2].splice(index, 1);
     if (kind === "coral")
       state.placedItems = state.placedItems.filter(
         (item) => !(item.kind === "coral" && String(item.livestockId) === String(id))
@@ -893,9 +1033,11 @@
         <button id="placementBegin">Move selected</button>
         <button id="placementLeft" aria-label="Rotate placement left">\u21B6 15\xB0</button>
         <button id="placementRight" aria-label="Rotate placement right">\u21B7 15\xB0</button>
+        <label>Rock/decor size <input id="placementScale" type="range" min="25" max="200" step="1" value="100" disabled><output id="placementScaleValue">100%</output></label>
+        <button id="placementSave" disabled>Save placement</button>
         <button id="placementCancel">Cancel</button>
         <p id="placementStatus" role="status">Enable editing to select an object in the tank.</p>`;
-    const enabled = document.getElementById("placementEnabled");
+    const enabled2 = document.getElementById("placementEnabled");
     const select = document.getElementById("placementItem");
     let inventory = "";
     engine.updateAquascapeControls = () => {
@@ -920,15 +1062,15 @@
       select.value = previous;
     };
     const enable = () => {
-      engine.renderer.placement?.setEnabled(enabled.checked);
+      engine.renderer.placement?.setEnabled(enabled2.checked);
       if (engine.renderer.controls)
-        engine.renderer.controls.enabled = !enabled.checked;
+        engine.renderer.controls.enabled = !enabled2.checked;
     };
-    enabled.addEventListener("change", enable);
+    enabled2.addEventListener("change", enable);
     document.getElementById("placementBegin").addEventListener("click", () => {
       const [kind, ...parts] = select.value.split(":");
       if (!parts.length) return;
-      enabled.checked = true;
+      enabled2.checked = true;
       enable();
       engine.renderer.placement?.begin(
         kind === "coral" ? { kind, livestockId: Number(parts.join(":")) } : { kind, id: parts.join(":") }
@@ -940,12 +1082,24 @@
     );
     document.getElementById("placementRight").addEventListener("click", () => engine.renderer.placement?.rotate(15));
     document.getElementById("placementCancel").addEventListener("click", () => engine.renderer.placement?.cancel());
+    document.getElementById("placementScale").addEventListener(
+      "input",
+      (event) => engine.renderer.placement?.setScale(Number(event.target.value))
+    );
+    document.getElementById("placementSave").addEventListener("click", () => engine.renderer.placement?.commit());
     let lastPlacementSelection = null;
-    engine.renderer.onPlacementStatus = (status) => {
-      const selectionId = status.selection?.id || null;
-      document.getElementById("placementStatus").textContent = `${status.reason || ""}${status.selection ? ` Rotation: ${status.rotation || 0}\xB0` : ""}`;
+    engine.renderer.onPlacementStatus = (status2) => {
+      const selectionId = status2.selection?.id || null;
+      const scale = document.getElementById("placementScale");
+      scale.disabled = status2.selection?.kind !== "rock";
+      scale.min = status2.minScale;
+      scale.max = status2.maxScale;
+      scale.value = status2.scalePercent;
+      document.getElementById("placementScaleValue").textContent = `${Math.round(status2.scalePercent)}% \xB7 ${(status2.sizeMeters * 100).toFixed(1)} cm`;
+      document.getElementById("placementSave").disabled = !status2.valid;
+      document.getElementById("placementStatus").textContent = `${status2.reason || ""}${status2.selection ? ` Rotation: ${status2.rotation || 0}\xB0` : ""}`;
       if (engine.renderer.placement?.enabled) {
-        enabled.checked = true;
+        enabled2.checked = true;
         if (selectionId && selectionId !== lastPlacementSelection)
           document.getElementById("aquascapePanel").open = true;
         engine.renderer.controls.enabled = false;
@@ -1003,7 +1157,7 @@
      * @returns {any} Value or undefined
      */
     get(path) {
-      return path.split(".").reduce((obj, key) => obj?.[key], this.state);
+      return path.split(".").reduce((obj, key2) => obj?.[key2], this.state);
     }
     /**
      * Load a new state object into the store in-place, keeping existing proxies & subscribers
@@ -1012,14 +1166,14 @@
     load(newState) {
       if (!newState || typeof newState !== "object") return;
       const rawTarget = this._state;
-      for (const key in rawTarget) {
-        if (Object.prototype.hasOwnProperty.call(rawTarget, key)) {
-          delete rawTarget[key];
+      for (const key2 in rawTarget) {
+        if (Object.prototype.hasOwnProperty.call(rawTarget, key2)) {
+          delete rawTarget[key2];
         }
       }
-      for (const key in newState) {
-        if (Object.prototype.hasOwnProperty.call(newState, key)) {
-          rawTarget[key] = this._deepProxy(newState[key], [key]);
+      for (const key2 in newState) {
+        if (Object.prototype.hasOwnProperty.call(newState, key2)) {
+          rawTarget[key2] = this._deepProxy(newState[key2], [key2]);
         }
       }
       this._queueNotification("*");
@@ -1036,9 +1190,9 @@
         return obj;
       }
       const self = this;
-      for (const key in obj) {
-        if (Object.prototype.hasOwnProperty.call(obj, key)) {
-          obj[key] = this._deepProxy(obj[key], [...pathSegments, key]);
+      for (const key2 in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, key2)) {
+          obj[key2] = this._deepProxy(obj[key2], [...pathSegments, key2]);
         }
       }
       return new Proxy(obj, {
@@ -7624,8 +7778,8 @@
       return output;
       function extractFromCache(cache2) {
         const values = [];
-        for (const key in cache2) {
-          const data = cache2[key];
+        for (const key2 in cache2) {
+          const data = cache2[key2];
           delete data.metadata;
           values.push(data);
         }
@@ -8018,20 +8172,20 @@
     },
     setValues: function(values) {
       if (values === void 0) return;
-      for (const key in values) {
-        const newValue = values[key];
+      for (const key2 in values) {
+        const newValue = values[key2];
         if (newValue === void 0) {
-          console.warn("THREE.Material: '" + key + "' parameter is undefined.");
+          console.warn("THREE.Material: '" + key2 + "' parameter is undefined.");
           continue;
         }
-        if (key === "shading") {
+        if (key2 === "shading") {
           console.warn("THREE." + this.type + ": .shading has been removed. Use the boolean .flatShading instead.");
           this.flatShading = newValue === FlatShading ? true : false;
           continue;
         }
-        const currentValue = this[key];
+        const currentValue = this[key2];
         if (currentValue === void 0) {
-          console.warn("THREE." + this.type + ": '" + key + "' is not a property of this material.");
+          console.warn("THREE." + this.type + ": '" + key2 + "' is not a property of this material.");
           continue;
         }
         if (currentValue && currentValue.isColor) {
@@ -8039,7 +8193,7 @@
         } else if (currentValue && currentValue.isVector3 && (newValue && newValue.isVector3)) {
           currentValue.copy(newValue);
         } else {
-          this[key] = newValue;
+          this[key2] = newValue;
         }
       }
     },
@@ -8165,8 +8319,8 @@
       if (JSON.stringify(this.userData) !== "{}") data.userData = this.userData;
       function extractFromCache(cache2) {
         const values = [];
-        for (const key in cache2) {
-          const data2 = cache2[key];
+        for (const key2 in cache2) {
+          const data2 = cache2[key2];
           delete data2.metadata;
           values.push(data2);
         }
@@ -9456,11 +9610,11 @@
         );
       }
       const attributes = this.attributes;
-      for (const key in attributes) {
-        if (geometry.attributes[key] === void 0) continue;
-        const attribute1 = attributes[key];
+      for (const key2 in attributes) {
+        if (geometry.attributes[key2] === void 0) continue;
+        const attribute1 = attributes[key2];
         const attributeArray1 = attribute1.array;
-        const attribute2 = geometry.attributes[key];
+        const attribute2 = geometry.attributes[key2];
         const attributeArray2 = attribute2.array;
         const attributeOffset = attribute2.itemSize * offset;
         const length = Math.min(attributeArray2.length, attributeArray1.length - attributeOffset);
@@ -9538,8 +9692,8 @@
       if (Object.keys(this.userData).length > 0) data.userData = this.userData;
       if (this.parameters !== void 0) {
         const parameters = this.parameters;
-        for (const key in parameters) {
-          if (parameters[key] !== void 0) data[key] = parameters[key];
+        for (const key2 in parameters) {
+          if (parameters[key2] !== void 0) data[key2] = parameters[key2];
         }
         return data;
       }
@@ -9552,21 +9706,21 @@
         };
       }
       const attributes = this.attributes;
-      for (const key in attributes) {
-        const attribute = attributes[key];
-        data.data.attributes[key] = attribute.toJSON(data.data);
+      for (const key2 in attributes) {
+        const attribute = attributes[key2];
+        data.data.attributes[key2] = attribute.toJSON(data.data);
       }
       const morphAttributes = {};
       let hasMorphAttributes = false;
-      for (const key in this.morphAttributes) {
-        const attributeArray = this.morphAttributes[key];
+      for (const key2 in this.morphAttributes) {
+        const attributeArray = this.morphAttributes[key2];
         const array = [];
         for (let i = 0, il = attributeArray.length; i < il; i++) {
           const attribute = attributeArray[i];
           array.push(attribute.toJSON(data.data));
         }
         if (array.length > 0) {
-          morphAttributes[key] = array;
+          morphAttributes[key2] = array;
           hasMorphAttributes = true;
         }
       }
@@ -10096,8 +10250,8 @@
       data.vertexShader = this.vertexShader;
       data.fragmentShader = this.fragmentShader;
       const extensions = {};
-      for (const key in this.extensions) {
-        if (this.extensions[key] === true) extensions[key] = true;
+      for (const key2 in this.extensions) {
+        if (this.extensions[key2] === true) extensions[key2] = true;
       }
       if (Object.keys(extensions).length > 0) data.extensions = extensions;
       return data;
@@ -11615,9 +11769,9 @@
       const cachedAttributes = currentState.attributes;
       const geometryAttributes = geometry.attributes;
       let attributesNum = 0;
-      for (const key in geometryAttributes) {
-        const cachedAttribute = cachedAttributes[key];
-        const geometryAttribute = geometryAttributes[key];
+      for (const key2 in geometryAttributes) {
+        const cachedAttribute = cachedAttributes[key2];
+        const geometryAttribute = geometryAttributes[key2];
         if (cachedAttribute === void 0) return true;
         if (cachedAttribute.attribute !== geometryAttribute) return true;
         if (cachedAttribute.data !== geometryAttribute.data) return true;
@@ -11631,14 +11785,14 @@
       const cache2 = {};
       const attributes2 = geometry.attributes;
       let attributesNum = 0;
-      for (const key in attributes2) {
-        const attribute = attributes2[key];
+      for (const key2 in attributes2) {
+        const attribute = attributes2[key2];
         const data = {};
         data.attribute = attribute;
         if (attribute.data) {
           data.data = attribute.data;
         }
-        cache2[key] = data;
+        cache2[key2] = data;
         attributesNum++;
       }
       currentState.attributes = cache2;
@@ -11944,13 +12098,13 @@
     this.numPlanes = 0;
     this.numIntersection = 0;
     this.init = function(planes, enableLocalClipping, camera) {
-      const enabled = planes.length !== 0 || enableLocalClipping || // enable state of previous frame - the clipping code has to
+      const enabled2 = planes.length !== 0 || enableLocalClipping || // enable state of previous frame - the clipping code has to
       // run another frame in order to reset the state:
       numGlobalPlanes !== 0 || localClippingEnabled;
       localClippingEnabled = enableLocalClipping;
       globalState = projectPlanes(planes, camera, 0);
       numGlobalPlanes = planes.length;
-      return enabled;
+      return enabled2;
     };
     this.beginShadows = function() {
       renderingShadows = true;
@@ -13028,9 +13182,9 @@
     }
   }
   function getShaderErrors(gl, shader, type) {
-    const status = gl.getShaderParameter(shader, 35713);
+    const status2 = gl.getShaderParameter(shader, 35713);
     const log = gl.getShaderInfoLog(shader).trim();
-    if (status && log === "") return "";
+    if (status2 && log === "") return "";
     const source = gl.getShaderSource(shader);
     return "THREE.WebGLShader: gl.getShaderInfoLog() " + type + "\n" + log + addLineNumbers(source);
   }
@@ -13814,8 +13968,8 @@
     function remove(object) {
       properties.delete(object);
     }
-    function update(object, key, value) {
-      properties.get(object)[key] = value;
+    function update(object, key2, value) {
+      properties.get(object)[key2] = value;
     }
     function dispose() {
       properties = /* @__PURE__ */ new WeakMap();
@@ -19689,9 +19843,9 @@
           }
         }
       }
-      for (const key in edgeData) {
-        if (edgeData[key]) {
-          const { index0, index1 } = edgeData[key];
+      for (const key2 in edgeData) {
+        if (edgeData[key2]) {
+          const { index0, index1 } = edgeData[key2];
           _v0.fromBufferAttribute(positionAttr, index0);
           _v1$1.fromBufferAttribute(positionAttr, index1);
           vertices.push(_v0.x, _v0.y, _v0.z);
@@ -19856,18 +20010,18 @@
     } while (a !== start);
   }
   function eliminateHoles(data, holeIndices, outerNode, dim) {
-    const queue = [];
+    const queue2 = [];
     let i, len, start, end, list;
     for (i = 0, len = holeIndices.length; i < len; i++) {
       start = holeIndices[i] * dim;
       end = i < len - 1 ? holeIndices[i + 1] * dim : data.length;
       list = linkedList(data, start, end, dim, false);
       if (list === list.next) list.steiner = true;
-      queue.push(getLeftmost(list));
+      queue2.push(getLeftmost(list));
     }
-    queue.sort(compareX);
-    for (i = 0; i < queue.length; i++) {
-      eliminateHole(queue[i], outerNode);
+    queue2.sort(compareX);
+    for (i = 0; i < queue2.length; i++) {
+      eliminateHole(queue2[i], outerNode);
       outerNode = filterPoints(outerNode, outerNode.next);
     }
     return outerNode;
@@ -21297,15 +21451,15 @@
               const edge2 = indices.getX(i + (j + 1) % 3);
               edge[0] = Math.min(edge1, edge2);
               edge[1] = Math.max(edge1, edge2);
-              const key = edge[0] + "," + edge[1];
-              if (edges[key] === void 0) {
-                edges[key] = { index1: edge[0], index2: edge[1] };
+              const key2 = edge[0] + "," + edge[1];
+              if (edges[key2] === void 0) {
+                edges[key2] = { index1: edge[0], index2: edge[1] };
               }
             }
           }
         }
-        for (const key in edges) {
-          const e = edges[key];
+        for (const key2 in edges) {
+          const e = edges[key2];
           vertex.fromBufferAttribute(position, e.index1);
           vertices.push(vertex.x, vertex.y, vertex.z);
           vertex.fromBufferAttribute(position, e.index2);
@@ -21898,40 +22052,40 @@
     },
     // function for parsing AOS keyframe formats
     flattenJSON: function(jsonKeys, times, values, valuePropertyName) {
-      let i = 1, key = jsonKeys[0];
-      while (key !== void 0 && key[valuePropertyName] === void 0) {
-        key = jsonKeys[i++];
+      let i = 1, key2 = jsonKeys[0];
+      while (key2 !== void 0 && key2[valuePropertyName] === void 0) {
+        key2 = jsonKeys[i++];
       }
-      if (key === void 0) return;
-      let value = key[valuePropertyName];
+      if (key2 === void 0) return;
+      let value = key2[valuePropertyName];
       if (value === void 0) return;
       if (Array.isArray(value)) {
         do {
-          value = key[valuePropertyName];
+          value = key2[valuePropertyName];
           if (value !== void 0) {
-            times.push(key.time);
+            times.push(key2.time);
             values.push.apply(values, value);
           }
-          key = jsonKeys[i++];
-        } while (key !== void 0);
+          key2 = jsonKeys[i++];
+        } while (key2 !== void 0);
       } else if (value.toArray !== void 0) {
         do {
-          value = key[valuePropertyName];
+          value = key2[valuePropertyName];
           if (value !== void 0) {
-            times.push(key.time);
+            times.push(key2.time);
             value.toArray(values, values.length);
           }
-          key = jsonKeys[i++];
-        } while (key !== void 0);
+          key2 = jsonKeys[i++];
+        } while (key2 !== void 0);
       } else {
         do {
-          value = key[valuePropertyName];
+          value = key2[valuePropertyName];
           if (value !== void 0) {
-            times.push(key.time);
+            times.push(key2.time);
             values.push(value);
           }
-          key = jsonKeys[i++];
-        } while (key !== void 0);
+          key2 = jsonKeys[i++];
+        } while (key2 !== void 0);
       }
     },
     subclip: function(sourceClip, name, startFrame, endFrame, fps = 30) {
@@ -22752,16 +22906,16 @@
   var Cache = {
     enabled: false,
     files: {},
-    add: function(key, file) {
+    add: function(key2, file) {
       if (this.enabled === false) return;
-      this.files[key] = file;
+      this.files[key2] = file;
     },
-    get: function(key) {
+    get: function(key2) {
       if (this.enabled === false) return;
-      return this.files[key];
+      return this.files[key2];
     },
-    remove: function(key) {
-      delete this.files[key];
+    remove: function(key2) {
+      delete this.files[key2];
     },
     clear: function() {
       this.files = {};
@@ -25044,8 +25198,8 @@
       if (json.vertexShader !== void 0) material3.vertexShader = json.vertexShader;
       if (json.fragmentShader !== void 0) material3.fragmentShader = json.fragmentShader;
       if (json.extensions !== void 0) {
-        for (const key in json.extensions) {
-          material3.extensions[key] = json.extensions[key];
+        for (const key2 in json.extensions) {
+          material3.extensions[key2] = json.extensions[key2];
         }
       }
       if (json.shading !== void 0) material3.flatShading = json.shading === 1;
@@ -25213,8 +25367,8 @@
         geometry.setIndex(new BufferAttribute(typedArray, 1));
       }
       const attributes = json.data.attributes;
-      for (const key in attributes) {
-        const attribute = attributes[key];
+      for (const key2 in attributes) {
+        const attribute = attributes[key2];
         let bufferAttribute;
         if (attribute.isInterleavedBufferAttribute) {
           const interleavedBuffer = getInterleavedBuffer(json.data, attribute.data);
@@ -25230,12 +25384,12 @@
           bufferAttribute.updateRange.offset = attribute.updateRange.offset;
           bufferAttribute.updateRange.count = attribute.updateRange.count;
         }
-        geometry.setAttribute(key, bufferAttribute);
+        geometry.setAttribute(key2, bufferAttribute);
       }
       const morphAttributes = json.data.morphAttributes;
       if (morphAttributes) {
-        for (const key in morphAttributes) {
-          const attributeArray = morphAttributes[key];
+        for (const key2 in morphAttributes) {
+          const attributeArray = morphAttributes[key2];
           const array = [];
           for (let i = 0, il = attributeArray.length; i < il; i++) {
             const attribute = attributeArray[i];
@@ -25250,7 +25404,7 @@
             if (attribute.name !== void 0) bufferAttribute.name = attribute.name;
             array.push(bufferAttribute);
           }
-          geometry.morphAttributes[key] = array;
+          geometry.morphAttributes[key2] = array;
         }
       }
       const morphTargetsRelative = json.data.morphTargetsRelative;
@@ -31692,19 +31846,19 @@
     c.height = h;
     return { canvas: c, ctx: c.getContext("2d") };
   }
-  function finalizeTexture(canvas, key) {
+  function finalizeTexture(canvas, key2) {
     const tex = new CanvasTexture(canvas);
     tex.wrapS = RepeatWrapping;
     tex.wrapT = ClampToEdgeWrapping;
     tex.anisotropy = 4;
     if ("sRGBEncoding" in three_module_exports) tex.encoding = sRGBEncoding;
     tex.needsUpdate = true;
-    if (key) CACHE.set(key, tex);
+    if (key2) CACHE.set(key2, tex);
     return tex;
   }
-  function cached(key, builder) {
-    if (CACHE.has(key)) return CACHE.get(key);
-    return finalizeTexture(builder(), key);
+  function cached(key2, builder) {
+    if (CACHE.has(key2)) return CACHE.get(key2);
+    return finalizeTexture(builder(), key2);
   }
   function addSpeckle(ctx, w, h, count, baseAlpha) {
     if (baseAlpha === void 0) baseAlpha = 0.06;
@@ -31729,9 +31883,9 @@
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
   }
-  function stripeTexture(key, baseColor, stripes, opts) {
+  function stripeTexture(key2, baseColor, stripes, opts) {
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const cv = makeCanvas(opts.w || 256, opts.h || 128);
       const canvas = cv.canvas, ctx = cv.ctx;
       const w = canvas.width, h = canvas.height;
@@ -31752,9 +31906,9 @@
       return canvas;
     });
   }
-  function lengthStripeTexture(key, baseColor, colors, count, opts) {
+  function lengthStripeTexture(key2, baseColor, colors, count, opts) {
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const cv = makeCanvas(opts.w || 256, opts.h || 128);
       const canvas = cv.canvas, ctx = cv.ctx;
       const w = canvas.width, h = canvas.height;
@@ -31771,9 +31925,9 @@
       return canvas;
     });
   }
-  function mazeTexture(key, baseColor, lineColors, opts) {
+  function mazeTexture(key2, baseColor, lineColors, opts) {
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const cv = makeCanvas(opts.w || 256, opts.h || 256);
       const canvas = cv.canvas, ctx = cv.ctx;
       const w = canvas.width, h = canvas.height;
@@ -31803,9 +31957,9 @@
       return canvas;
     });
   }
-  function spotTexture(key, baseColor, dotColor, count, opts) {
+  function spotTexture(key2, baseColor, dotColor, count, opts) {
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const cv = makeCanvas(opts.w || 256, opts.h || 256);
       const canvas = cv.canvas, ctx = cv.ctx;
       const w = canvas.width, h = canvas.height;
@@ -31826,9 +31980,9 @@
       return canvas;
     });
   }
-  function mottleTexture(key, baseColor, blotchColors, opts) {
+  function mottleTexture(key2, baseColor, blotchColors, opts) {
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const cv = makeCanvas(opts.w || 256, opts.h || 256);
       const canvas = cv.canvas, ctx = cv.ctx;
       const w = canvas.width, h = canvas.height;
@@ -31851,10 +32005,10 @@
       return canvas;
     });
   }
-  function diagonalSplitTexture(key, colorA, colorB, splitAt, opts) {
+  function diagonalSplitTexture(key2, colorA, colorB, splitAt, opts) {
     if (splitAt === void 0) splitAt = 0.45;
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const cv = makeCanvas(opts.w || 256, opts.h || 128);
       const canvas = cv.canvas, ctx = cv.ctx;
       const w = canvas.width, h = canvas.height;
@@ -31870,9 +32024,9 @@
       return canvas;
     });
   }
-  function concentricRingTexture(key, baseColor, ringColor, rings, opts) {
+  function concentricRingTexture(key2, baseColor, ringColor, rings, opts) {
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const cv = makeCanvas(opts.w || 256, opts.h || 256);
       const canvas = cv.canvas, ctx = cv.ctx;
       const w = canvas.width, h = canvas.height;
@@ -31900,9 +32054,9 @@
       return canvas;
     });
   }
-  function polypFieldTexture(key, baseColor, polypColor, count, opts) {
+  function polypFieldTexture(key2, baseColor, polypColor, count, opts) {
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const cv = makeCanvas(opts.w || 128, opts.h || 128);
       const canvas = cv.canvas, ctx = cv.ctx;
       const w = canvas.width, h = canvas.height;
@@ -31943,8 +32097,8 @@
       return canvas;
     });
   }
-  function causticsTexture(key) {
-    return cached(key || "caustics", function() {
+  function causticsTexture(key2) {
+    return cached(key2 || "caustics", function() {
       const cv = makeCanvas(256, 256);
       const canvas = cv.canvas, ctx = cv.ctx;
       ctx.fillStyle = "#000000";
@@ -31967,9 +32121,9 @@
       return canvas;
     });
   }
-  function gradientTexture(key, colorStops, opts) {
+  function gradientTexture(key2, colorStops, opts) {
     opts = opts || {};
-    return cached(key, function() {
+    return cached(key2, function() {
       const vertical = !!opts.vertical;
       const cv = makeCanvas(
         opts.w || (vertical ? 64 : 256),
@@ -32889,15 +33043,15 @@
       cache2 = /* @__PURE__ */ new Map();
       heightCaches.set(habitat, cache2);
     }
-    const cell = 0.012, ix = Math.round(x / cell), iz = Math.round(z / cell), key = ix + ":" + iz;
-    if (!cache2.has(key)) {
+    const cell = 0.012, ix = Math.round(x / cell), iz = Math.round(z / cell), key2 = ix + ":" + iz;
+    if (!cache2.has(key2)) {
       if (cache2.size > 8192) cache2.clear();
       cache2.set(
-        key,
+        key2,
         habitat.sample(ix * cell, iz * cell)?.y ?? habitat.floorY
       );
     }
-    return cache2.get(key);
+    return cache2.get(key2);
   }
   function foodTarget(animal, state) {
     const event = state?.feedingEvent;
@@ -32990,7 +33144,7 @@
   }
   var obstacles = /* @__PURE__ */ new WeakMap();
   function coralObstacle(mesh2) {
-    const key = [
+    const key2 = [
       mesh2.position.x,
       mesh2.position.y,
       mesh2.position.z,
@@ -32998,8 +33152,8 @@
       mesh2.rotation.y
     ].join(":");
     let cached2 = obstacles.get(mesh2);
-    if (cached2?.key !== key) {
-      cached2 = { key, box: new Box3().setFromObject(mesh2) };
+    if (cached2?.key !== key2) {
+      cached2 = { key: key2, box: new Box3().setFromObject(mesh2) };
       obstacles.set(mesh2, cached2);
     }
     return cached2.box;
@@ -35925,9 +36079,9 @@
     }
     update(state, delta) {
       const event = state.feedingEvent;
-      const key = event ? `${event.id}:${event.timeHours}` : "";
-      if (key && key !== this.key) {
-        this.key = key;
+      const key2 = event ? `${event.id}:${event.timeHours}` : "";
+      if (key2 && key2 !== this.key) {
+        this.key = key2;
         const now2 = state.day * 24 + state.hour + state.minute / 60;
         this.elapsed = now2 - event.timeHours > 2 ? 60 : 0;
       }
@@ -36002,9 +36156,9 @@
       canvas.addEventListener("click", this.clickHandler);
       globalThis.window?.addEventListener("keydown", this.keyHandler);
     }
-    setEnabled(enabled) {
-      this.enabled = Boolean(enabled);
-      if (!enabled) this.cancel();
+    setEnabled(enabled2) {
+      this.enabled = Boolean(enabled2);
+      if (!enabled2) this.cancel();
       else
         this.status(
           "Select a purchased rock or coral, then click its new surface."
@@ -36053,6 +36207,11 @@
         id: item?.id || `coral-${selection.livestockId}`
       };
       this.original = mesh2;
+      this.originalPlacement = item;
+      this.originalScale = mesh2.scale.clone();
+      this.originalSize = item?.size || 0;
+      this.baseSize = item?.baseSize || this.originalSize;
+      this.scalePercent = this.baseSize ? Math.round(this.originalSize / this.baseSize * 100) : 100;
       this.rotation = snapRotation((item?.rotation || 0) * 180 / Math.PI);
       this.previewMaterial = new MeshBasicMaterial({
         color: 4384420,
@@ -36070,9 +36229,29 @@
       const bounds = new Box3().setFromObject(mesh2);
       this.radius = selection.kind === "coral" ? mesh2.userData.placementRadius : item.size / 2;
       this.height = selection.kind === "coral" ? mesh2.userData.coralHeight * mesh2.scale.x : bounds.max.y - bounds.min.y;
+      this.originalHeight = this.height;
       this.baseOffset = selection.kind === "coral" ? mesh2.userData.coralBaseOffset * mesh2.scale.x - 1e-3 : 0;
       this.status(
         "Point at sand or a stable rock ledge. Rotate in 15\xB0 steps."
+      );
+      return true;
+    }
+    setScale(percent) {
+      if (this.selection?.kind !== "rock" || !Number.isFinite(Number(percent)))
+        return false;
+      const min = Math.max(25, Math.ceil(0.025 / this.baseSize * 100));
+      const max = Math.min(200, Math.floor(0.5 / this.baseSize * 100));
+      this.scalePercent = Math.max(min, Math.min(max, Number(percent)));
+      const size = this.baseSize * this.scalePercent / 100;
+      const factor = size / this.originalSize;
+      this.radius = size / 2;
+      this.height = this.originalHeight * factor;
+      this.preview.scale.copy(this.originalScale).multiplyScalar(factor);
+      const saved = this.originalPlacement;
+      this.setPreview(
+        this.pending?.point || saved.position,
+        this.pending?.normal || saved.normal || { x: 0, y: 1, z: 0 },
+        this.pending?.supportId ?? saved.supportId ?? null
       );
       return true;
     }
@@ -36166,6 +36345,24 @@
         result.valid = false;
         result.reason = "Place the object directly on a solid surface.";
       }
+      if (supportId && result.valid) {
+        for (let i = 0; i < 8; i++) {
+          const angle = i * Math.PI / 4;
+          const dx = Math.cos(angle) * this.radius * 0.6;
+          const dz = Math.sin(angle) * this.radius * 0.6;
+          const edge = this.getHabitat().sample(
+            point.x + dx,
+            point.z + dz,
+            { excludeId: this.selection.id }
+          );
+          const expectedY = point.y - (normal.x * dx + normal.z * dz) / normal.y;
+          if (edge.surfaceId !== supportId || Math.abs(edge.y - expectedY) > 0.015) {
+            result.valid = false;
+            result.reason = "Choose a wider supporting ledge for this size.";
+            break;
+          }
+        }
+      }
       this.pending = {
         point: { x: point.x, y: point.y, z: point.z },
         normal: { x: normal.x, y: normal.y, z: normal.z },
@@ -36234,6 +36431,10 @@
         size: this.radius * 2,
         supportId: this.pending.supportId
       });
+      if (item.kind === "rock") {
+        item.baseSize = this.baseSize;
+        this.original.scale.copy(this.preview.scale);
+      }
       if (item.kind === "coral") applyCoralPlacement(this.original, item);
       else
         applySurfaceTransform(
@@ -36258,6 +36459,10 @@
         valid: Boolean(this.pending?.valid),
         reason,
         rotation: this.rotation || 0,
+        scalePercent: this.scalePercent || 100,
+        sizeMeters: this.radius * 2 || 0,
+        minScale: this.baseSize ? Math.max(25, Math.ceil(0.025 / this.baseSize * 100)) : 25,
+        maxScale: this.baseSize ? Math.min(200, Math.floor(0.5 / this.baseSize * 100)) : 200,
         selection: this.selection || null
       });
     }
@@ -36571,7 +36776,7 @@ void main() {
           getMeshes: () => ({ coralMeshes: this.coralMeshes }),
           getHabitat: () => getHabitat(this.scene, this._state),
           onCommit: (item) => this.onPlacementCommit?.(item),
-          onStatus: (status) => this.onPlacementStatus?.(status)
+          onStatus: (status2) => this.onPlacementStatus?.(status2)
         });
       this._wildlifeContext = {
         habitat,
@@ -36738,23 +36943,23 @@ void main() {
   // js/ui/SparklineManager.js
   var SparklineManager = {
     history: {},
-    addReading(key, value) {
-      if (!this.history[key]) this.history[key] = [];
-      this.history[key].push(value);
-      if (this.history[key].length > 48) {
-        this.history[key].shift();
+    addReading(key2, value) {
+      if (!this.history[key2]) this.history[key2] = [];
+      this.history[key2].push(value);
+      if (this.history[key2].length > 48) {
+        this.history[key2].shift();
       }
     },
-    getTrend(key) {
-      const h = this.history[key];
+    getTrend(key2) {
+      const h = this.history[key2];
       if (!h || h.length < 2) return "flat";
       const last = h[h.length - 1];
       const prev = h[h.length - 2];
       if (Math.abs(last - prev) < 0.01) return "flat";
       return last > prev ? "up" : "down";
     },
-    drawSparkline(key, canvasId, color) {
-      const h = this.history[key];
+    drawSparkline(key2, canvasId, color) {
+      const h = this.history[key2];
       if (!h || h.length === 0) return;
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
@@ -36932,14 +37137,14 @@ void main() {
       const pNitri = getStatus(w.nitrite, 0, 0, 0.25, Number.MAX_VALUE);
       const pNitra = getStatus(w.nitrate, 0, 20, 0, 50);
       const pAlk = getStatus(w.alkalinity, 8, 12, 7, 13);
-      const formatRow = (label2, key, val, unit, status, min, max, tooltip) => {
-        const trend = SparklineManager.getTrend(key);
+      const formatRow = (label2, key2, val, unit, status2, min, max, tooltip) => {
+        const trend = SparklineManager.getTrend(key2);
         const colorMap = {
           good: "#39ff14",
           warning: "#ff9f00",
           danger: "#ff2d55"
         };
-        const color = colorMap[status];
+        const color = colorMap[status2];
         const pct = Math.max(
           0,
           Math.min(100, (val - min) / (max - min) * 100)
@@ -36951,9 +37156,9 @@ void main() {
                     <div class="tooltip-text">${tooltip}</div>
                 </div>
                 <div class="param-value-container">
-                    <canvas id="spark_${key}" class="param-sparkline" width="60" height="16"></canvas>
+                    <canvas id="spark_${key2}" class="param-sparkline" width="60" height="16"></canvas>
                     <div class="param-trend ${getTrendClass(trend)}">${getTrendIcon(trend)}</div>
-                    <div class="param-value ${status}">${val.toFixed(2)} ${unit}</div>
+                    <div class="param-value ${status2}">${val.toFixed(2)} ${unit}</div>
                 </div>
             </div>
             <div class="param-bar"><div class="param-bar-fill" style="width:${pct}%; background:${color}"></div></div>
@@ -36988,10 +37193,10 @@ void main() {
             "nitrite",
             "nitrate",
             "alkalinity"
-          ].forEach((key) => {
+          ].forEach((key2) => {
             SparklineManager.drawSparkline(
-              key,
-              "spark_" + key,
+              key2,
+              "spark_" + key2,
               "rgba(0, 255, 225, 0.8)"
             );
           });
@@ -37225,9 +37430,9 @@ void main() {
     }
     static renderKnowledge(state, _callbacks) {
       let html = "";
-      Object.keys(KNOWLEDGE_BASE).forEach((key) => {
-        const kb = KNOWLEDGE_BASE[key];
-        const pct = state.knowledge[key] || 0;
+      Object.keys(KNOWLEDGE_BASE).forEach((key2) => {
+        const kb = KNOWLEDGE_BASE[key2];
+        const pct = state.knowledge[key2] || 0;
         let content = `
                 <div class="topic-title">${kb.title}</div>
                 <div class="topic-progress">
@@ -37235,10 +37440,10 @@ void main() {
                     <span class="topic-pct">${pct}%</span>
                 </div>`;
         if (pct >= 40 && kb.quiz) {
-          content += `<button class="quiz-btn" data-action="take-quiz" data-key="${key}">Take Quiz</button>`;
+          content += `<button class="quiz-btn" data-action="take-quiz" data-key="${key2}">Take Quiz</button>`;
         }
         html += `
-            <div class="knowledge-topic" data-action="read-kb" data-key="${key}">
+            <div class="knowledge-topic" data-action="read-kb" data-key="${key2}">
                 ${content}
             </div>`;
       });
@@ -37406,7 +37611,7 @@ void main() {
       if (forceUI || this._uiDirty) {
         this._uiDirty = false;
         UIController.renderAll(this.state, {
-          onToggleEquipment: (key) => this.toggleEquipment(key),
+          onToggleEquipment: (key2) => this.toggleEquipment(key2),
           onWaterChange: () => this.doWaterChange(),
           onCleanGlass: () => this.cleanGlass(),
           onTopOff: () => this.doTopOff(),
@@ -37433,8 +37638,8 @@ void main() {
           onBuyFish: (id) => this.buyFish(id),
           onBuyCoral: (id) => this.buyCoral(id),
           onBuyCleanup: (id) => this.buyCleanup(id),
-          onReadKnowledge: (key) => this.readKnowledge(key, true),
-          onTakeQuiz: (key) => this.takeQuiz(key)
+          onReadKnowledge: (key2) => this.readKnowledge(key2, true),
+          onTakeQuiz: (key2) => this.takeQuiz(key2)
         });
       }
       this.renderer.render(this.state);
@@ -37762,20 +37967,20 @@ void main() {
       );
       this.render();
     }
-    readKnowledge(key, showLesson = false) {
-      const topic = KNOWLEDGE_BASE[key];
+    readKnowledge(key2, showLesson = false) {
+      const topic = KNOWLEDGE_BASE[key2];
       if (!topic) return;
-      this.state.knowledge[key] = Math.min(
+      this.state.knowledge[key2] = Math.min(
         100,
-        (this.state.knowledge[key] || 0) + 20
+        (this.state.knowledge[key2] || 0) + 20
       );
       if (showLesson) this.showModal(topic.title, topic.content);
       this.save();
       this.render();
     }
     // Quiz system methods
-    takeQuiz(key) {
-      const topic = KNOWLEDGE_BASE[key];
+    takeQuiz(key2) {
+      const topic = KNOWLEDGE_BASE[key2];
       if (!topic || !topic.quiz) {
         UIController.showToast(
           "Quiz not available for this topic",
@@ -37784,7 +37989,7 @@ void main() {
         return;
       }
       this.currentQuiz = {
-        key,
+        key: key2,
         questions: topic.quiz.questions,
         currentQuestionIndex: 0,
         score: 0,
@@ -37865,7 +38070,7 @@ void main() {
       }, 1500);
     }
     finishQuiz() {
-      const { key, questions, score } = this.currentQuiz;
+      const { key: key2, questions, score } = this.currentQuiz;
       const percentage = Math.round(score / questions.length * 100);
       let knowledgeGain = 0;
       if (percentage >= 80) {
@@ -37877,9 +38082,9 @@ void main() {
       } else {
         knowledgeGain = 5;
       }
-      const currentKnowledge = this.state.knowledge[key] || 0;
+      const currentKnowledge = this.state.knowledge[key2] || 0;
       const newKnowledge = Math.min(100, currentKnowledge + knowledgeGain);
-      this.state.knowledge[key] = newKnowledge;
+      this.state.knowledge[key2] = newKnowledge;
       const resultHtml = `
             <div class="quiz-results">
                 <h3>Quiz Complete!</h3>
@@ -37909,8 +38114,8 @@ void main() {
       const profiles = GameState.getSavedProfiles();
       this.state.lastSaved = Date.now();
       profiles[this.state.profileName] = this.state;
-      const status = document.getElementById("saveStatus");
-      if (status) status.textContent = "Saved";
+      const status2 = document.getElementById("saveStatus");
+      if (status2) status2.textContent = "Saved";
       GameState.saveProfiles(profiles);
       GameState.setActiveProfileName(this.state.profileName);
     }
@@ -37968,8 +38173,8 @@ void main() {
         if (!content) return;
         content.style.display = content.style.display === "none" ? "" : "none";
       };
-      window.takeQuiz = (key) => {
-        this.takeQuiz(key);
+      window.takeQuiz = (key2) => {
+        this.takeQuiz(key2);
       };
     }
   };
@@ -37985,7 +38190,8 @@ void main() {
       "'": "&#39;"
     })[c]
   );
-  window.addEventListener("DOMContentLoaded", () => {
+  window.addEventListener("DOMContentLoaded", async () => {
+    await initializePersistence();
     const engine = new GameEngine();
     window.gameEngine = engine;
     window.showProfileModal = () => {
@@ -38014,12 +38220,10 @@ void main() {
       }
       if (modalBody) {
         modalBody.querySelectorAll("[data-profile]").forEach((button) => {
-          button.onclick = () => {
+          button.onclick = async () => {
             if (engine.state.started) engine.save();
-            localStorage.setItem(
-              "reefSimActiveProfile",
-              button.dataset.profile
-            );
+            GameState.setActiveProfileName(button.dataset.profile);
+            await flushPersistence();
             const saved = profiles[button.dataset.profile];
             if (saved && window.gameEngine) {
               window.gameEngine.gameState.loadFromSnapshot(saved);
@@ -38041,17 +38245,14 @@ void main() {
               document.getElementById("mainLayout").style.display = "none";
               document.getElementById("topNav").style.display = "none";
               document.getElementById("resumeButton").style.display = "none";
-              localStorage.setItem("reefSimActiveProfile", newName);
+              GameState.setActiveProfileName(newName);
               const currentProfiles = GameState.getSavedProfiles();
               if (!currentProfiles[newName]) {
                 currentProfiles[newName] = {
                   started: false,
                   profileName: newName
                 };
-                localStorage.setItem(
-                  "reefSimProfiles",
-                  JSON.stringify(currentProfiles)
-                );
+                GameState.saveProfiles(currentProfiles);
               }
               window.showProfileModal();
               const profileInfo = document.getElementById("welcomeProfileInfo");
@@ -38092,7 +38293,7 @@ void main() {
       if (modalTitle) modalTitle.textContent = "Test Water";
       if (modalBody) {
         modalBody.innerHTML = engine.state.equipment.testKit ? "<p>Current water measurements</p>" + Object.entries(engine.state.water).map(
-          ([key, value]) => `<p><strong>${PARAM_LABELS[key] || key}</strong>: ${Number(value).toFixed(2)} ${WATER_IDEAL[key]?.unit || ""}</p>`
+          ([key2, value]) => `<p><strong>${PARAM_LABELS[key2] || key2}</strong>: ${Number(value).toFixed(2)} ${WATER_IDEAL[key2]?.unit || ""}</p>`
         ).join("") : "<p>Purchase a Test Kit from the equipment store to measure your water.</p>";
       }
       if (modalActions) {
@@ -38110,10 +38311,17 @@ void main() {
         overlay.classList.remove("show");
       }
     };
-    window.clearSavedData = () => {
+    window.clearSavedData = async () => {
       engine.state.started = false;
-      localStorage.removeItem("reefSimProfiles");
-      localStorage.removeItem("reefSimActiveProfile");
+      try {
+        await clearPersistence();
+      } catch {
+        engine.state.started = true;
+        window.alert(
+          "Could not clear the database. Your saves were retained."
+        );
+        return;
+      }
       console.log("Saved data cleared");
       location.reload();
     };

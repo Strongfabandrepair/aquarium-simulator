@@ -1,4 +1,14 @@
-November 3, 2026: [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) documents the latest decor/backgrounds, 37-entry catalog, anemone hosting and visible growth expansion. Earlier entries below describe previous versions.
+November 3, 2026: [PERSISTENCE_AND_SETUP.md](PERSISTENCE_AND_SETUP.md) documents SQLite profiles, per-item sizing and the global OmniRoute migration. Earlier entries below describe previous versions.
+
+## Durable profiles and sizing — November 3, 2026
+
+Final integrated validation passed: **124 unit tests across 19 files, one real-server API/restart scenario, all 35 Chromium scenarios, production build and lint**. Browser tests run against the Node application server. The API test verifies durable writes across a process restart, isolated browser identities, malformed writes, revision conflicts, origin checks and private-file protection. Browser tests additionally verify legacy migration, recovery after localStorage loss, honest failed-write status, immediate-save/reload preservation, reset, and individual ship scaling/movement/reload.
+
+The first integration run exposed stale snapshot recovery and acknowledgement races; pending local writes now retain their active profile identity and cannot be erased by an older acknowledgement. Heavy scene generation no longer prematurely times out a save. Gallery harness routing stays inside Playwright without widening the server's private-file protections. The final complete run had no failures.
+
+OmniRoute 3.8.50 was verified globally on the C drive and restarted successfully with healthy status. The old project installation and 1,147 extraneous packages were removed after backing up local configuration/data outside the repository. All 131,700 previously vendored node_modules entries were untracked. npm now audits 136 project packages, with 11 remaining findings (7 moderate, 4 high); this change does not claim to resolve every dependency advisory.
+
+SQLite/browser-cookie recovery and backup limits are described in the setup guide. Profiles are local to a browser identity, not cross-device accounts. Runtime databases, private backups and generated test artifacts are excluded from publishing.
 
 ## Decor and companions expansion — November 3, 2026
 

@@ -107,6 +107,8 @@ test('profile names display as text and corrupted saves do not break boot', asyn
     await expect(page.locator('#newProfileName')).toBeVisible();
     await page.locator('#newProfileName').fill('<b>Reef</b>');
     await page.locator('#createNewProfileBtn').click();
-    await expect(page.locator('[data-profile]')).toContainText('<b>Reef</b>');
+    await expect(
+        page.locator('[data-profile]').filter({ hasText: '<b>Reef</b>' })
+    ).toContainText('<b>Reef</b>');
     expect(await page.locator('[data-profile] b').count()).toBe(0);
 });

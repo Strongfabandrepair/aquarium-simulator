@@ -1,3 +1,5 @@
+November 3, 2026: [PERSISTENCE_AND_SETUP.md](PERSISTENCE_AND_SETUP.md) covers SQLite-backed profiles, individual decor sizing and global OmniRoute separation.
+
 November 3, 2026 expansion: see [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) for purchasable decor/backgrounds, the 37-entry species catalog, anemone hosting and visible bounded growth.
 
 # ReefSim physical aquarium and husbandry modules

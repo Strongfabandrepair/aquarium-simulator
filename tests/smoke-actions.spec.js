@@ -93,6 +93,13 @@ test('autosave runs and reset stays cleared after reload', async ({ page }) => {
     await page.reload();
     await page.locator('#resetBtn').click();
     await expect(page.locator('#welcomeScreen')).toBeVisible();
+    await expect
+        .poll(() =>
+            page.evaluate(() => localStorage.getItem('reefSimProfiles'))
+        )
+        .toBe(null);
+    await page.reload();
+    await page.waitForFunction(() => window.gameEngine);
     expect(
         await page.evaluate(() => localStorage.getItem('reefSimProfiles'))
     ).toBe(null);

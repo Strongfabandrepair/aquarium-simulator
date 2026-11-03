@@ -40,6 +40,8 @@ export function setupAquariumControls(engine) {
         <button id="placementBegin">Move selected</button>
         <button id="placementLeft" aria-label="Rotate placement left">↶ 15°</button>
         <button id="placementRight" aria-label="Rotate placement right">↷ 15°</button>
+        <label>Rock/decor size <input id="placementScale" type="range" min="25" max="200" step="1" value="100" disabled><output id="placementScaleValue">100%</output></label>
+        <button id="placementSave" disabled>Save placement</button>
         <button id="placementCancel">Cancel</button>
         <p id="placementStatus" role="status">Enable editing to select an object in the tank.</p>`;
     const enabled = document.getElementById('placementEnabled');
@@ -101,9 +103,25 @@ export function setupAquariumControls(engine) {
     document
         .getElementById('placementCancel')
         .addEventListener('click', () => engine.renderer.placement?.cancel());
+    document
+        .getElementById('placementScale')
+        .addEventListener('input', (event) =>
+            engine.renderer.placement?.setScale(Number(event.target.value))
+        );
+    document
+        .getElementById('placementSave')
+        .addEventListener('click', () => engine.renderer.placement?.commit());
     let lastPlacementSelection = null;
     engine.renderer.onPlacementStatus = (status) => {
         const selectionId = status.selection?.id || null;
+        const scale = document.getElementById('placementScale');
+        scale.disabled = status.selection?.kind !== 'rock';
+        scale.min = status.minScale;
+        scale.max = status.maxScale;
+        scale.value = status.scalePercent;
+        document.getElementById('placementScaleValue').textContent =
+            `${Math.round(status.scalePercent)}% · ${(status.sizeMeters * 100).toFixed(1)} cm`;
+        document.getElementById('placementSave').disabled = !status.valid;
         document.getElementById('placementStatus').textContent =
             `${status.reason || ''}${status.selection ? ` Rotation: ${status.rotation || 0}°` : ''}`;
         if (engine.renderer.placement?.enabled) {

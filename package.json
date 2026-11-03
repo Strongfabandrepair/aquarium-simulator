@@ -7,10 +7,8 @@
     "test:watch": "vitest",
     "lint": "eslint \"js/**/*.js\"",
     "format": "prettier --write \"js/**/*.js\"",
-    "omniroute:help": "omniroute --help",
-    "omniroute:serve": "omniroute serve",
-    "omniroute:health": "omniroute health",
-    "omniroute:stop": "omniroute stop"
+    "start": "node server/index.js",
+    "test:api": "node --test tests/persistence-api.node.js"
   },
   "dependencies": {
     "three": "^0.128.0"
@@ -18,24 +16,10 @@
   "devDependencies": {
     "esbuild": "^0.28.2",
     "eslint": "^9.9.0",
-    "omniroute": "^3.8.49",
     "playwright": "^1.62.1",
     "prettier": "^3.3.3",
     "vitest": "^4.1.11"
   },
-  "allowScripts": {
-    "esbuild@0.21.5": true,
-    "esbuild@0.28.2": true,
-    "omniroute@3.8.49": true,
-    "@parcel/watcher@2.6.0": true,
-    "@swc/core@1.15.47": true,
-    "better-sqlite3@13.0.3": true,
-    "core-js@3.29.1": true,
-    "keytar@7.9.0": true,
-    "koffi@2.16.3": true,
-    "onnxruntime-node@1.21.0": true,
-    "protobufjs@7.6.5": true,
-    "sharp@0.34.5": true,
-    "tls-client-node@0.2.0": true
-  }
+  "engines": { "node": ">=22.13.0" },
+  "allowScripts": { "esbuild@0.28.2": true }
 }

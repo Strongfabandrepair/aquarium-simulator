@@ -11,7 +11,7 @@ export default defineConfig({
         trace: 'on-first-retry'
     },
     webServer: {
-        command: 'python -m http.server 8766 --bind 127.0.0.1',
+        command: 'node server/index.js',
         url: 'http://127.0.0.1:8766',
         reuseExistingServer: !process.env.CI
     },

@@ -44,6 +44,18 @@ test('decor purchases, editor selection, backgrounds and reload retain ownership
         )
     ).toBe(ship);
     await page.locator('#placementRight').click();
+    await page.locator('#placementScale').evaluate((input) => {
+        input.value = '75';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(
+        await page.evaluate(
+            (id) =>
+                window.gameEngine.state.placedItems.find((i) => i.id === id)
+                    .size,
+            ship
+        )
+    ).toBe(0.25);
     const target = await page.evaluate(() => {
         const r = window.gameEngine.renderer;
         const point = r.camera.position
@@ -110,5 +122,11 @@ test('decor purchases, editor selection, backgrounds and reload retain ownership
     expect(
         await page.evaluate(() => window.gameEngine.state.placedItems.length)
     ).toBe(6);
+    const savedShip = await page.evaluate(
+        (id) => window.gameEngine.state.placedItems.find((i) => i.id === id),
+        ship
+    );
+    expect(savedShip.size).toBeCloseTo(0.1875);
+    expect(savedShip.baseSize).toBe(0.25);
     expect(errors).toEqual([]);
 });

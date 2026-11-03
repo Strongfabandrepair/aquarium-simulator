@@ -1,0 +1,49 @@
+openapi: 3.1.0
+info:
+  title: ReefSim local persistence
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:8766
+paths:
+  /api/profiles:
+    get:
+      summary: Read this browser's durable profile collection and revision
+      responses:
+        '200':
+          description: JSON object with profiles, active and revision; assigns an HttpOnly SameSite browser identity cookie on first visit
+    put:
+      summary: Atomically replace this browser's profile collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Collection'
+      responses:
+        '200':
+          description: Committed collection with incremented revision
+        '400':
+          description: Invalid JSON or collection
+        '403':
+          description: Cross-origin request or missing browser identity
+        '409':
+          description: Stale revision; no write performed
+        '413':
+          description: Body exceeds 5 MiB
+components:
+  schemas:
+    Collection:
+      type: object
+      required: [profiles, active, revision]
+      properties:
+        profiles:
+          type: object
+          maxProperties: 100
+          additionalProperties:
+            type: object
+        active:
+          type: string
+          maxLength: 100
+        revision:
+          type: integer
+          minimum: 0

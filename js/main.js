@@ -17,7 +17,14 @@ const escapeHTML = (value) =>
             })[c]
     );
 
-window.addEventListener('DOMContentLoaded', () => {
+import {
+    initializePersistence,
+    flushPersistence,
+    clearPersistence
+} from './persistence/ProfilePersistence.js';
+
+window.addEventListener('DOMContentLoaded', async () => {
+    await initializePersistence();
     const engine = new GameEngine();
     window.gameEngine = engine;
 
@@ -57,12 +64,10 @@ window.addEventListener('DOMContentLoaded', () => {
 
         if (modalBody) {
             modalBody.querySelectorAll('[data-profile]').forEach((button) => {
-                button.onclick = () => {
+                button.onclick = async () => {
                     if (engine.state.started) engine.save();
-                    localStorage.setItem(
-                        'reefSimActiveProfile',
-                        button.dataset.profile
-                    );
+                    GameState.setActiveProfileName(button.dataset.profile);
+                    await flushPersistence();
                     const saved = profiles[button.dataset.profile];
                     if (saved && window.gameEngine) {
                         window.gameEngine.gameState.loadFromSnapshot(saved);
@@ -91,7 +96,7 @@ window.addEventListener('DOMContentLoaded', () => {
                             'none';
                         document.getElementById('resumeButton').style.display =
                             'none';
-                        localStorage.setItem('reefSimActiveProfile', newName);
+                        GameState.setActiveProfileName(newName);
                         // Save a blank profile so it shows up in list immediately
                         const currentProfiles = GameState.getSavedProfiles();
                         if (!currentProfiles[newName]) {
@@ -99,10 +104,7 @@ window.addEventListener('DOMContentLoaded', () => {
                                 started: false,
                                 profileName: newName
                             };
-                            localStorage.setItem(
-                                'reefSimProfiles',
-                                JSON.stringify(currentProfiles)
-                            );
+                            GameState.saveProfiles(currentProfiles);
                         }
                         window.showProfileModal(); // Refresh modal
                         // Update UI info
@@ -180,10 +182,17 @@ window.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    window.clearSavedData = () => {
+    window.clearSavedData = async () => {
         engine.state.started = false;
-        localStorage.removeItem('reefSimProfiles');
-        localStorage.removeItem('reefSimActiveProfile');
+        try {
+            await clearPersistence();
+        } catch {
+            engine.state.started = true;
+            window.alert(
+                'Could not clear the database. Your saves were retained.'
+            );
+            return;
+        }
         console.log('Saved data cleared');
         location.reload();
     };

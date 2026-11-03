@@ -1,3 +1,5 @@
+November 3, 2026: [PERSISTENCE_AND_SETUP.md](PERSISTENCE_AND_SETUP.md) covers SQLite-backed profiles, individual decor sizing and global OmniRoute separation.
+
 # Aquarium decor, companions and growth
 
 ## Decorating a tank

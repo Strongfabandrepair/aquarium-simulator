@@ -1,3 +1,4 @@
+import { schedulePersistence } from '../persistence/ProfilePersistence.js';
 // =========================================
 // GAME STATE MANAGEMENT & DATA DEFINITIONS
 // =========================================
@@ -258,6 +259,7 @@ export class GameState {
 
     static saveProfiles(profiles) {
         localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+        schedulePersistence();
     }
 
     static getActiveProfileName() {
@@ -266,5 +268,6 @@ export class GameState {
 
     static setActiveProfileName(name) {
         localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+        schedulePersistence();
     }
 }

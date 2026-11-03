@@ -1,3 +1,5 @@
+November 3, 2026: [PERSISTENCE_AND_SETUP.md](PERSISTENCE_AND_SETUP.md) covers SQLite-backed profiles, individual decor sizing and global OmniRoute separation.
+
 November 3, 2026 expansion: see [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) for purchasable decor/backgrounds, the 37-entry species catalog, anemone hosting and visible bounded growth.
 
 November 3, 2026: [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) documents the current meter-scale tank generator, raycast aquascape editor, 33-species catalog, feeding/growth/mortality systems and verification. Earlier entries below describe previous versions.
@@ -24,45 +26,18 @@ Bundle the app:
 
 - `npm run build`
 
-Run a local static server (required for asset loading/WebGL):
+Start the local application and SQLite profile store (Node.js 22.13+):
 
-- `python -m http.server 8000`
+- `npm start`
+- Open `http://127.0.0.1:8766`
 
-Then open:
-
-- `http://localhost:8000`
-
-## OmniRoute quick runbook
-
-OmniRoute is configured as a **project-local dev dependency** so this repo does not rely on a global install.
-
-### Start the server
-
-- `npm run omniroute:serve`
-
-### Check health
-
-- `npm run omniroute:health`
-
-### Stop the server
-
-- `npm run omniroute:stop`
-
-### Show CLI help
-
-- `npm run omniroute:help`
-
-### Default local endpoints
-
-When running, OmniRoute exposes:
-
-- Dashboard: `http://localhost:20128`
-- API base: `http://localhost:20128/v1`
+See [PERSISTENCE_AND_SETUP.md](PERSISTENCE_AND_SETUP.md) for database location/backups, browser identity, per-item sizing and the separate global OmniRoute installation. Static hosting supports local-only saves.
 
 ## Quality checks
 
 - Unit tests: `npm test`
-- Browser tests: `npx playwright install chromium`, then `npm run test:ui` (requires Python 3)
+- Persistence API/restart tests: `npm run test:api`
+- Browser tests: `npx playwright install chromium`, then `npm run test:ui` (starts the Node server)
 - Build: `npm run build`
 - Watch tests: `npm run test:watch`
 - Lint: `npm run lint`

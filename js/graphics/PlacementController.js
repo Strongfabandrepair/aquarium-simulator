@@ -110,6 +110,13 @@ export class PlacementController {
             id: item?.id || `coral-${selection.livestockId}`
         };
         this.original = mesh;
+        this.originalPlacement = item;
+        this.originalScale = mesh.scale.clone();
+        this.originalSize = item?.size || 0;
+        this.baseSize = item?.baseSize || this.originalSize;
+        this.scalePercent = this.baseSize
+            ? Math.round((this.originalSize / this.baseSize) * 100)
+            : 100;
         this.rotation = snapRotation(((item?.rotation || 0) * 180) / Math.PI);
         this.previewMaterial = new THREE.MeshBasicMaterial({
             color: 0x42e6a4,
@@ -133,12 +140,36 @@ export class PlacementController {
             selection.kind === 'coral'
                 ? mesh.userData.coralHeight * mesh.scale.x
                 : bounds.max.y - bounds.min.y;
+        this.originalHeight = this.height;
         this.baseOffset =
             selection.kind === 'coral'
                 ? mesh.userData.coralBaseOffset * mesh.scale.x - 0.001
                 : 0;
         this.status(
             'Point at sand or a stable rock ledge. Rotate in 15° steps.'
+        );
+        return true;
+    }
+
+    setScale(percent) {
+        if (
+            this.selection?.kind !== 'rock' ||
+            !Number.isFinite(Number(percent))
+        )
+            return false;
+        const min = Math.max(25, Math.ceil((0.025 / this.baseSize) * 100));
+        const max = Math.min(200, Math.floor((0.5 / this.baseSize) * 100));
+        this.scalePercent = Math.max(min, Math.min(max, Number(percent)));
+        const size = (this.baseSize * this.scalePercent) / 100;
+        const factor = size / this.originalSize;
+        this.radius = size / 2;
+        this.height = this.originalHeight * factor;
+        this.preview.scale.copy(this.originalScale).multiplyScalar(factor);
+        const saved = this.originalPlacement;
+        this.setPreview(
+            this.pending?.point || saved.position,
+            this.pending?.normal || saved.normal || { x: 0, y: 1, z: 0 },
+            this.pending?.supportId ?? saved.supportId ?? null
         );
         return true;
     }
@@ -245,6 +276,29 @@ export class PlacementController {
             result.valid = false;
             result.reason = 'Place the object directly on a solid surface.';
         }
+        if (supportId && result.valid) {
+            for (let i = 0; i < 8; i++) {
+                const angle = (i * Math.PI) / 4;
+                const dx = Math.cos(angle) * this.radius * 0.6;
+                const dz = Math.sin(angle) * this.radius * 0.6;
+                const edge = this.getHabitat().sample(
+                    point.x + dx,
+                    point.z + dz,
+                    { excludeId: this.selection.id }
+                );
+                const expectedY =
+                    point.y - (normal.x * dx + normal.z * dz) / normal.y;
+                if (
+                    edge.surfaceId !== supportId ||
+                    Math.abs(edge.y - expectedY) > 0.015
+                ) {
+                    result.valid = false;
+                    result.reason =
+                        'Choose a wider supporting ledge for this size.';
+                    break;
+                }
+            }
+        }
         this.pending = {
             point: { x: point.x, y: point.y, z: point.z },
             normal: { x: normal.x, y: normal.y, z: normal.z },
@@ -321,6 +375,10 @@ export class PlacementController {
             size: this.radius * 2,
             supportId: this.pending.supportId
         });
+        if (item.kind === 'rock') {
+            item.baseSize = this.baseSize;
+            this.original.scale.copy(this.preview.scale);
+        }
         if (item.kind === 'coral') applyCoralPlacement(this.original, item);
         else
             applySurfaceTransform(
@@ -346,6 +404,14 @@ export class PlacementController {
             valid: Boolean(this.pending?.valid),
             reason,
             rotation: this.rotation || 0,
+            scalePercent: this.scalePercent || 100,
+            sizeMeters: this.radius * 2 || 0,
+            minScale: this.baseSize
+                ? Math.max(25, Math.ceil((0.025 / this.baseSize) * 100))
+                : 25,
+            maxScale: this.baseSize
+                ? Math.min(200, Math.floor((0.5 / this.baseSize) * 100))
+                : 200,
             selection: this.selection || null
         });
     }
