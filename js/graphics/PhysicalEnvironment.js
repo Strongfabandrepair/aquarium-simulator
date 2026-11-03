@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createDecor, createBackground } from './DecorModels.js';
 import TextureGenerator from './TextureGenerator.js';
 import {
     getTankSpec,
@@ -538,12 +539,15 @@ export function buildPhysicalEnvironment(state) {
             placementSurface: true
         };
     }
-    if (eq.liveRock > 0) {
+    if (
+        eq.liveRock > 0 ||
+        state.placedItems?.some((item) => item.kind === 'rock')
+    ) {
         const rocks = new THREE.Group();
         rocks.userData = { isEnv: true, type: 'rocks' };
         group.add(rocks);
         state.placedItems ||= [];
-        if (!state.aquascapeInitialized) {
+        if (eq.liveRock > 0 && !state.aquascapeInitialized) {
             if (!state.placedItems.some((i) => i.kind === 'rock'))
                 state.placedItems.push(...defaultRockPlacements(spec, surface));
             state.aquascapeInitialized = true;
@@ -553,6 +557,33 @@ export function buildPhysicalEnvironment(state) {
                 0.025,
                 Math.min(0.5, Number(item.size) || 0.12)
             );
+            const decoration = createDecor(item);
+            if (decoration) {
+                decoration.position.set(
+                    item.position.x,
+                    item.position.y,
+                    item.position.z
+                );
+                decoration.quaternion.setFromUnitVectors(
+                    new THREE.Vector3(0, 1, 0),
+                    new THREE.Vector3(
+                        item.normal?.x || 0,
+                        item.normal?.y ?? 1,
+                        item.normal?.z || 0
+                    ).normalize()
+                );
+                decoration.rotateY(item.rotation || 0);
+                decoration.userData = {
+                    isEnv: true,
+                    type: 'rock',
+                    placementSurface: true,
+                    placedItemId: item.id,
+                    id: item.id,
+                    diameterMeters: size
+                };
+                rocks.add(decoration);
+                continue;
+            }
             const geo = new THREE.DodecahedronGeometry(size / 2, 2);
             geo.scale(1, 0.8, 0.78);
             geo.computeBoundingBox();
@@ -591,6 +622,8 @@ export function buildPhysicalEnvironment(state) {
             };
         }
     }
+    const backdrop = createBackground(state, spec);
+    if (backdrop) group.add(backdrop);
     equipment(group, state, spec, surface);
     group.updateMatrixWorld(true);
     return group;

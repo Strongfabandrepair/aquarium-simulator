@@ -8,6 +8,10 @@ export const SPECIES_SOURCES = [
     'https://www.fishbase.se/summary/Cryptocentrus-cinctus.html'
 ];
 const rows = [
+    ['valentiniPuffer', 0.11, 0.035, 700, 'hover', 'meaty'],
+    ['orchidDottyback', 0.075, 0.03, 500, 'cave', 'meaty'],
+    ['serpentStar', 0.25, 0.07, 900, 'nocturnal', 'meaty'],
+    ['bubbleTipAnemone', 0.3, 0.07, 900, 'colony', 'meaty'],
     ['clownfish', 0.11, 0.045, 500, 'territorial', 'mixed'],
     ['royalGramma', 0.08, 0.035, 400, 'cave', 'meaty'],
     ['firefishGoby', 0.09, 0.04, 400, 'hover', 'plankton'],
@@ -73,7 +77,7 @@ export function physicalSize(animal, kind = 'fish') {
     const species = getSpecies(animal.templateId);
     const value = kind === 'coral' ? animal.diameterM : animal.lengthM;
     return Number.isFinite(value) && value > 0
-        ? Math.min(species.adultLengthM * 1.1, Math.max(0.005, value))
+        ? Math.min(species.adultLengthM, Math.max(0.005, value))
         : species.juvenileLengthM;
 }
 const fish = (id, name, price, minTank, desc) => ({
@@ -95,6 +99,29 @@ const fish = (id, name, price, minTank, desc) => ({
     o2Consume: 0.08
 });
 export const NEW_FISH = [
+    {
+        ...fish(
+            'valentiniPuffer',
+            'Saddle Valentini Puffer',
+            45,
+            30,
+            'Rounded sharpnose puffer with dark saddles, spotted flanks and yellow fins. Not reef safe: may eat shrimp, snails and nip corals.'
+        ),
+        maxPer: 1,
+        care: 'Feed varied meaty foods including shelled foods for tooth wear. Keep away from vulnerable invertebrates; never provoke inflation.',
+        incompatible: ['shrimp', 'snails', 'corals'],
+        compat: ['compatible fish-only community']
+    },
+    {
+        ...fish(
+            'orchidDottyback',
+            'Orchid Dottyback',
+            35,
+            30,
+            'Purple reef-cave resident with a dark eye stripe; provide crevices and meaty foods.'
+        ),
+        maxPer: 1
+    },
     fish(
         'lyretailAnthias',
         'Lyretail Anthias',
@@ -118,6 +145,23 @@ export const NEW_FISH = [
     )
 ];
 export const NEW_CORALS = [
+    {
+        id: 'bubbleTipAnemone',
+        name: 'Bubble-tip Anemone',
+        icon: '🪸',
+        price: 65,
+        difficulty: 'hard',
+        type: 'anemone',
+        lightNeed: 'high',
+        alkConsume: 0,
+        calcConsume: 0,
+        flowNeed: 'moderate',
+        minTank: 30,
+        desc: 'A host sea anemone, not a coral: fleshy oral disc with rose bubble-tipped tentacles.',
+        care: 'Requires an established stable aquarium, strong reef lighting and guarded pump intakes. Can wander and sting neighbors. Clownfish hosting is not guaranteed in real tanks.',
+        realPrice: 'Varies'
+    },
+
     {
         id: 'toadstoolLeather',
         name: 'Toadstool Leather',
@@ -152,6 +196,18 @@ export const NEW_CORALS = [
     }
 ];
 export const NEW_CLEANUP = [
+    {
+        id: 'serpentStar',
+        name: 'Banded Serpent Star',
+        icon: '⭐',
+        price: 25,
+        realPrice: 'Varies',
+        desc: 'Five slender jointed arms surround a small central disc; a nocturnal scavenger, not an algae eater.',
+        count: 1,
+        algaeReduce: 0,
+        care: 'Target-feed meaty food and provide rock crevices; acclimate carefully to stable salinity.'
+    },
+
     {
         id: 'trochusSnail',
         name: 'Trochus Snail',

@@ -36,7 +36,13 @@ export function initializeAnimal(animal, kind, state) {
         animal.growthProgress = 1 - Math.sqrt(1 - fraction);
     }
     animal.ageDays ??= Math.max(0, state.day - (animal.addedDay ?? state.day));
-    animal[key] ??= juvenile + (adult - juvenile) * animal.growthProgress;
+    animal.growthProgress = Math.max(0, Math.min(1, animal.growthProgress));
+    const matureSize =
+        juvenile +
+        (adult - juvenile) * (1 - Math.pow(1 - animal.growthProgress, 2));
+    animal[key] = Number.isFinite(animal[key])
+        ? Math.max(juvenile, Math.min(adult, animal[key]))
+        : matureSize;
     animal.lastMealDay ??= Math.max(
         state.lastFed || 0,
         animal.addedDay ?? state.day

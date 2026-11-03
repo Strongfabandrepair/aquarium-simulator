@@ -1,6 +1,8 @@
+November 3, 2026 expansion: see [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) for purchasable decor/backgrounds, the 37-entry species catalog, anemone hosting and visible bounded growth.
+
 # Wildlife rendering
 
-The catalog now has models for 33 entries: 13 fish, 12 coral types, and eight cleanup animals. See [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) for meter sizing, growth and the interactive editor. These are procedural, stylized anatomical models intended for real-time aquarium viewing, not scanned specimens.
+The catalog now has models for 37 entries: 15 fish, 13 coral/anemone types, and nine cleanup animals. See [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) for meter sizing, growth and the interactive editor. These are procedural, stylized anatomical models intended for real-time aquarium viewing, not scanned specimens.
 
 ## Fish
 

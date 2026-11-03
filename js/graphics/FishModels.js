@@ -3,6 +3,24 @@ import { fishTexture } from './FishTextures.js';
 
 // Body dimensions exclude the caudal fin. Shapes are deliberately species-specific.
 export const FISH_PROFILES = {
+    valentiniPuffer: {
+        length: 0.55,
+        height: 0.14,
+        width: 0.13,
+        color: 0xe3d8a4,
+        fin: 0xeac73c,
+        tail: 'round',
+        frequency: 3.8
+    },
+    orchidDottyback: {
+        length: 0.58,
+        height: 0.075,
+        width: 0.045,
+        color: 0xb03bc7,
+        fin: 0xb65ad3,
+        tail: 'round',
+        frequency: 2.5
+    },
     lyretailAnthias: {
         length: 0.61,
         height: 0.115,
@@ -423,6 +441,10 @@ export function createFishModel(fish, resolvedId = fish.templateId) {
         cardinal ? 0xeeeeee : p.color,
         cardinal
     );
+    if (resolvedId === 'valentiniPuffer') {
+        dorsal.scale.set(0.45, 0.45, 1);
+        dorsal.position.x = -L * 0.22;
+    }
     group.add(dorsal);
     const anal = fin(
         [
@@ -435,6 +457,10 @@ export function createFishModel(fish, resolvedId = fish.templateId) {
         p.color,
         cardinal
     );
+    if (resolvedId === 'valentiniPuffer') {
+        anal.scale.set(0.45, 0.45, 1);
+        anal.position.x = -L * 0.22;
+    }
     group.add(anal);
     let sail = null;
     if (resolvedId === 'firefishGoby') {
@@ -479,7 +505,7 @@ export function createFishModel(fish, resolvedId = fish.templateId) {
         );
         pelvic.position.set(L * 0.13, -H * 0.65, side * p.width * 0.35);
         pelvic.rotation.y = side * 0.28;
-        group.add(pelvic);
+        if (resolvedId !== 'valentiniPuffer') group.add(pelvic);
     }
     // Surgeonfish scalpel at the caudal peduncle; blenny cirri above the eyes.
     if (tang)

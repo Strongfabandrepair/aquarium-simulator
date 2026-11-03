@@ -412,6 +412,8 @@ export class UIController {
         // Only rebuild store HTML when ownership or budget changes
         const storeSig =
             state.budget +
+            ':' +
+            (state.activeBackground || '') +
             '|' +
             Object.keys(state.equipment)
                 .map((k) => k + ':' + (state.equipment[k] ? 1 : 0))
@@ -422,15 +424,18 @@ export class UIController {
         let html = '<div class="store-category">⚙️ Equipment Store</div>';
         EQUIPMENT_STORE.forEach((item) => {
             const isOwned =
-                state.equipment[item.id] ||
-                (item.id === 'saltMix' && state.equipment.saltMix > 100);
+                !item.stackable && Boolean(state.equipment[item.id]);
             const price = StoreService.getItemPrice(item, state.tankSize);
             const displayPrice = isOwned
-                ? '<span style="color:var(--text-secondary)">OWNED</span>'
+                ? item.category === 'background'
+                    ? state.activeBackground === item.id
+                        ? 'ACTIVE · HIDE'
+                        : 'SELECT · FREE'
+                    : '<span style="color:var(--text-secondary)">OWNED</span>'
                 : '$' + price;
 
             html += `
-            <div class="store-item ${isOwned ? 'locked' : ''}" data-action="buy-equip" data-id="${item.id}">
+            <div class="store-item ${isOwned && item.category !== 'background' ? 'locked' : ''}" data-action="buy-equip" data-id="${item.id}">
                 <div class="store-item-top">
                     <div class="store-item-name">${item.icon} ${item.name}</div>
                     <div class="store-item-price">${displayPrice}</div>

@@ -34,7 +34,26 @@ export function fishTexture(id) {
             let rgb = (palettes[id] || palettes.clownfish).slice();
             const black = [17, 22, 29],
                 white = [243, 242, 223];
-            if (id === 'lyretailAnthias') {
+            if (id === 'valentiniPuffer') {
+                rgb = [226, 218, 184];
+                if (
+                    height > -0.1 &&
+                    Math.min(
+                        Math.abs(u - 0.23),
+                        Math.abs(u - 0.48),
+                        Math.abs(u - 0.72)
+                    ) < 0.065
+                )
+                    rgb = black;
+                if (
+                    height < 0.25 &&
+                    Math.sin(u * 145) * Math.cos(angle * 29) > 0.8
+                )
+                    rgb = [106, 74, 39];
+            } else if (id === 'orchidDottyback') {
+                rgb = [179, 48, 201];
+                if (u > 0.76 && Math.abs(height - 0.3) < 0.09) rgb = black;
+            } else if (id === 'lyretailAnthias') {
                 if (u > 0.77 && Math.abs(height + 0.2) < 0.08)
                     rgb = [167, 65, 167];
                 if (height > 0.5) rgb = [233, 75, 130];

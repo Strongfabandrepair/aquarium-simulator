@@ -2,11 +2,18 @@
 // STORE CATALOG & PURCHASING SERVICES
 // =========================================
 
+import {
+    DECOR_STORE,
+    DECOR_CATALOG,
+    planDecorPlacement
+} from './DecorCatalog.js';
+
 import { TANK_CONFIGS } from '../engine/GameState.js';
 
 import { NEW_FISH, NEW_CORALS, NEW_CLEANUP } from './SpeciesCatalog.js';
 
 export const EQUIPMENT_STORE = [
+    ...DECOR_STORE,
     {
         id: 'tank',
         name: 'Glass Aquarium',
@@ -1032,6 +1039,24 @@ export class StoreService {
         if (!item) return { canBuy: false, reason: 'Item not found' };
 
         const price = this.getItemPrice(item, state.tankSize);
+        if (
+            ['decor', 'background'].includes(item.category) &&
+            !state.equipment.tank
+        )
+            return { canBuy: false, reason: 'Need tank first' };
+        if (item.category === 'background' && state.equipment[itemId])
+            return { canBuy: true, price: 0 };
+        if (
+            item.category === 'decor' &&
+            !planDecorPlacement(
+                state,
+                DECOR_CATALOG.find((t) => t.id === itemId)
+            )
+        )
+            return {
+                canBuy: false,
+                reason: 'No free floor space for this decoration. Move existing items or choose a smaller decoration.'
+            };
         if (state.budget < price)
             return { canBuy: false, reason: 'Insufficient budget' };
 

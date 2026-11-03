@@ -2,6 +2,7 @@
 // GAME ENGINE: ORCHESTRATOR & MAIN LOOP
 // =========================================
 
+import { DECOR_CATALOG, planDecorPlacement } from '../model/DecorCatalog.js';
 import { GameState } from './GameState.js';
 import {
     feedLivestock,
@@ -210,6 +211,7 @@ export class GameEngine {
         // Prevent buying duplicate non-stackable items
         if (
             !item.stackable &&
+            item.category !== 'background' &&
             itemId !== 'substrate' &&
             this.state.equipment[itemId]
         ) {
@@ -223,7 +225,25 @@ export class GameEngine {
         let journalText = `📦 Purchased ${item.name}`;
         let journalTip = item.desc;
 
-        if (itemId === 'liveRock') {
+        if (item.category === 'decor') {
+            const placed = planDecorPlacement(
+                this.state,
+                DECOR_CATALOG.find((t) => t.id === itemId)
+            );
+            placed.id = `decor-${Date.now()}-${(this.state.nextDecorId = (this.state.nextDecorId || 0) + 1)}`;
+            this.state.placedItems.push(placed);
+            this.state.equipment[itemId] =
+                (this.state.equipment[itemId] || 0) + 1;
+            journalTip =
+                'Aquarium-safe decorative replica; no biological filtration credit. Move it in the Aquascape editor.';
+        } else if (item.category === 'background') {
+            this.state.equipment[itemId] = true;
+            this.state.activeBackground =
+                this.state.activeBackground === itemId ? null : itemId;
+            journalText = this.state.activeBackground
+                ? `🖼️ Selected background: ${item.name}`
+                : '🖼️ Removed the visible background (still owned).';
+        } else if (itemId === 'liveRock') {
             this.state.equipment.liveRock =
                 (this.state.equipment.liveRock || 0) + 10;
             journalText = `🪨 Added 10 lbs of live rock. Total: ${this.state.equipment.liveRock} lbs. (Recommended: ${Math.round(this.state.tankGallons * 1.25)} lbs)`;

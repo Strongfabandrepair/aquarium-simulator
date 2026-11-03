@@ -5,6 +5,249 @@
       __defProp(target, name, { get: all[name], enumerable: true });
   };
 
+  // js/model/TankGeometry.js
+  var TANK_PRESETS = {
+    nano: { shape: "rectangular", width: 0.61, height: 0.42, depth: 0.305 },
+    medium: { shape: "rectangular", width: 1.22, height: 0.53, depth: 0.33 },
+    large: { shape: "rectangular", width: 1.22, height: 0.61, depth: 0.61 }
+  };
+  var clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  var dimension = (n, fallback) => Number.isFinite(Number(n)) && Number(n) > 0 ? clamp(Number(n), 0.25, 3) : fallback;
+  function normalizeTankSpec(spec = {}, preset = "medium") {
+    const base = TANK_PRESETS[preset] || TANK_PRESETS.medium;
+    spec ||= {};
+    const shape = ["rectangular", "cube", "cylinder", "bowfront"].includes(
+      spec.shape
+    ) ? spec.shape : base.shape;
+    const width = dimension(spec.width, base.width);
+    return {
+      shape,
+      width,
+      height: shape === "cube" ? width : dimension(spec.height, base.height),
+      depth: shape === "cube" || shape === "cylinder" ? width : dimension(spec.depth, base.depth)
+    };
+  }
+  function getTankSpec(state = {}) {
+    return normalizeTankSpec(state.tankSpec, state.tankSize);
+  }
+  var waterLevel = (spec) => normalizeTankSpec(spec).height / 2 - 0.025;
+  function tankVolumeLiters(input) {
+    const s = normalizeTankSpec(input);
+    let area2 = s.width * s.depth;
+    if (s.shape === "cylinder") area2 = Math.PI * (s.width / 2) ** 2;
+    if (s.shape === "bowfront") area2 *= 1 - 0.22 / 3;
+    return area2 * (s.height - 0.025) * 1e3;
+  }
+  function frontBoundary(s, x, margin) {
+    if (s.shape !== "bowfront") return s.depth / 2 - margin;
+    const a = s.depth * 0.22 / (s.width / 2) ** 2;
+    return s.depth / 2 - a * x * x - margin * Math.sqrt(1 + (2 * a * x) ** 2) - a * margin * margin;
+  }
+  function containsPoint(input, x, z, margin = 0) {
+    const s = normalizeTankSpec(input);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+    margin = Math.max(0, margin);
+    if (s.shape === "cylinder")
+      return Math.hypot(x, z) <= Math.max(0, s.width / 2 - margin) + 1e-9;
+    if (Math.abs(x) > s.width / 2 - margin + 1e-9 || z < -s.depth / 2 + margin - 1e-9)
+      return false;
+    return z <= frontBoundary(s, x, margin) + 1e-9;
+  }
+  function constrainPoint(input, point, margin = 0) {
+    const s = normalizeTankSpec(input);
+    margin = clamp(
+      Number.isFinite(margin) ? margin : 0,
+      0,
+      Math.min(s.width, s.depth, s.height) * 0.45
+    );
+    let x = Number.isFinite(point.x) ? point.x : 0;
+    let z = Number.isFinite(point.z) ? point.z : 0;
+    if (s.shape === "cylinder") {
+      const r = s.width / 2 - margin;
+      const length = Math.hypot(x, z);
+      if (length > r) {
+        x *= r / length;
+        z *= r / length;
+      }
+    } else {
+      x = clamp(x, -s.width / 2 + margin, s.width / 2 - margin);
+      z = clamp(z, -s.depth / 2 + margin, frontBoundary(s, x, margin));
+    }
+    return {
+      x,
+      y: clamp(
+        Number.isFinite(point.y) ? point.y : 0,
+        -s.height / 2 + margin,
+        waterLevel(s) - margin
+      ),
+      z
+    };
+  }
+  function tankOutline(input, segments = 64) {
+    const s = normalizeTankSpec(input);
+    if (s.shape === "cylinder")
+      return Array.from({ length: segments }, (_, i) => ({
+        x: Math.cos(i / segments * Math.PI * 2) * s.width / 2,
+        z: Math.sin(i / segments * Math.PI * 2) * s.width / 2
+      }));
+    const points = [
+      { x: -s.width / 2, z: -s.depth / 2 },
+      { x: s.width / 2, z: -s.depth / 2 }
+    ];
+    if (s.shape === "bowfront") {
+      for (let i = 0; i <= segments / 2; i++) {
+        const x = s.width / 2 - i / (segments / 2) * s.width;
+        points.push({
+          x,
+          z: s.depth / 2 - s.depth * 0.22 * (x / (s.width / 2)) ** 2
+        });
+      }
+    } else
+      points.push(
+        { x: s.width / 2, z: s.depth / 2 },
+        { x: -s.width / 2, z: s.depth / 2 }
+      );
+    return points;
+  }
+  function substrateHeight(state) {
+    const spec = getTankSpec(state);
+    return state.equipment?.substrate > 0 ? clamp(
+      state.equipment.substrate * 0.453592 / 1500 / (tankVolumeLiters(spec) / 1e3 / (spec.height - 0.025)),
+      0.012,
+      0.065
+    ) : 0;
+  }
+  function defaultRockPlacements(input, floorY) {
+    const spec = normalizeTankSpec(input);
+    const size = Math.min(spec.depth * 0.42, spec.height * 0.45, 0.22);
+    return [-1, 0, 1].map((side, i) => ({
+      id: `rock-default-${i}`,
+      kind: "rock",
+      position: {
+        x: side * spec.width * 0.22,
+        y: floorY ?? -spec.height / 2,
+        z: i === 1 ? -spec.depth * 0.12 : spec.depth * 0.03
+      },
+      normal: { x: 0, y: 1, z: 0 },
+      rotation: i * 1.7,
+      size: size * (i === 1 ? 1.2 : 1)
+    }));
+  }
+
+  // js/model/DecorCatalog.js
+  var DECOR_CATALOG = [
+    {
+      id: "limestonePebble",
+      name: "Ivory Limestone Pebble",
+      size: 0.07,
+      color: 13221280,
+      shape: "pebble",
+      price: 12
+    },
+    {
+      id: "corallineBoulder",
+      name: "Purple Coralline Boulder",
+      size: 0.18,
+      color: 9004927,
+      shape: "boulder",
+      price: 35
+    },
+    {
+      id: "slateShelf",
+      name: "Slate Reef Shelf",
+      size: 0.22,
+      color: 4610144,
+      shape: "shelf",
+      price: 30
+    },
+    {
+      id: "reefArch",
+      name: "Sandstone Reef Arch",
+      size: 0.24,
+      color: 11968891,
+      shape: "arch",
+      price: 45
+    },
+    {
+      id: "shipwreck",
+      name: "Sunken Sailing Ship",
+      size: 0.25,
+      color: 6635820,
+      shape: "ship",
+      price: 65
+    },
+    {
+      id: "treasureChest",
+      name: "Sunken Treasure Chest",
+      size: 0.13,
+      color: 7357995,
+      shape: "chest",
+      price: 28
+    }
+  ];
+  var BACKGROUNDS = [
+    {
+      id: "backgroundOcean",
+      name: "Blue Ocean Depths",
+      price: 25,
+      colors: ["#032638", "#117d99", "#062b3c"]
+    },
+    {
+      id: "backgroundReef",
+      name: "Distant Reef Panorama",
+      price: 40,
+      colors: ["#031c30", "#1b6d86", "#103c50"]
+    },
+    {
+      id: "backgroundKelp",
+      name: "Kelp Forest Panorama",
+      price: 35,
+      colors: ["#123535", "#367f70", "#132d2d"]
+    }
+  ];
+  var DECOR_STORE = [
+    ...DECOR_CATALOG.map((item) => ({
+      ...item,
+      category: "decor",
+      icon: "\u{1FAA8}",
+      stackable: true,
+      unlockPhase: 0,
+      desc: `${Math.round(item.size * 100)} cm aquarium-safe decorative replica. Move and rotate in the Aquascape editor. No biological filtration credit.`
+    })),
+    ...BACKGROUNDS.map((item) => ({
+      ...item,
+      category: "background",
+      icon: "\u{1F5BC}\uFE0F",
+      unlockPhase: 0,
+      desc: "Exterior decorative backdrop. Adds visual depth without occupying swimming space. Click an owned background to switch for free; click the active one to hide it."
+    }))
+  ];
+  function planDecorPlacement(state, template) {
+    const spec = getTankSpec(state), radius = template.size / 2;
+    const y = -spec.height / 2 + substrateHeight(state);
+    if (y + template.size > waterLevel(spec) - 5e-3) return null;
+    for (let row = 0; row < 21; row++)
+      for (let col = 0; col < 29; col++) {
+        const x = -spec.width / 2 + spec.width * (col + 0.5) / 29;
+        const z = spec.depth / 2 - spec.depth * (row + 0.5) / 21;
+        if (!containsPoint(spec, x, z, radius + 8e-3)) continue;
+        if ((state.placedItems || []).some(
+          (p) => Math.hypot(x - p.position.x, z - p.position.z) < radius + (p.size || 0.1) / 2 + 0.015
+        ))
+          continue;
+        return {
+          kind: "rock",
+          templateId: template.id,
+          name: template.name,
+          size: template.size,
+          position: { x, y, z },
+          normal: { x: 0, y: 1, z: 0 },
+          rotation: 0
+        };
+      }
+    return null;
+  }
+
   // js/engine/GameState.js
   var PROFILES_STORAGE_KEY = "reefSimProfiles";
   var ACTIVE_PROFILE_KEY = "reefSimActiveProfile";
@@ -257,6 +500,10 @@
 
   // js/model/SpeciesCatalog.js
   var rows = [
+    ["valentiniPuffer", 0.11, 0.035, 700, "hover", "meaty"],
+    ["orchidDottyback", 0.075, 0.03, 500, "cave", "meaty"],
+    ["serpentStar", 0.25, 0.07, 900, "nocturnal", "meaty"],
+    ["bubbleTipAnemone", 0.3, 0.07, 900, "colony", "meaty"],
     ["clownfish", 0.11, 0.045, 500, "territorial", "mixed"],
     ["royalGramma", 0.08, 0.035, 400, "cave", "meaty"],
     ["firefishGoby", 0.09, 0.04, 400, "hover", "plankton"],
@@ -321,7 +568,7 @@
   function physicalSize(animal, kind = "fish") {
     const species = getSpecies(animal.templateId);
     const value = kind === "coral" ? animal.diameterM : animal.lengthM;
-    return Number.isFinite(value) && value > 0 ? Math.min(species.adultLengthM * 1.1, Math.max(5e-3, value)) : species.juvenileLengthM;
+    return Number.isFinite(value) && value > 0 ? Math.min(species.adultLengthM, Math.max(5e-3, value)) : species.juvenileLengthM;
   }
   var fish = (id, name, price, minTank, desc) => ({
     id,
@@ -342,6 +589,29 @@
     o2Consume: 0.08
   });
   var NEW_FISH = [
+    {
+      ...fish(
+        "valentiniPuffer",
+        "Saddle Valentini Puffer",
+        45,
+        30,
+        "Rounded sharpnose puffer with dark saddles, spotted flanks and yellow fins. Not reef safe: may eat shrimp, snails and nip corals."
+      ),
+      maxPer: 1,
+      care: "Feed varied meaty foods including shelled foods for tooth wear. Keep away from vulnerable invertebrates; never provoke inflation.",
+      incompatible: ["shrimp", "snails", "corals"],
+      compat: ["compatible fish-only community"]
+    },
+    {
+      ...fish(
+        "orchidDottyback",
+        "Orchid Dottyback",
+        35,
+        30,
+        "Purple reef-cave resident with a dark eye stripe; provide crevices and meaty foods."
+      ),
+      maxPer: 1
+    },
     fish(
       "lyretailAnthias",
       "Lyretail Anthias",
@@ -365,6 +635,22 @@
     )
   ];
   var NEW_CORALS = [
+    {
+      id: "bubbleTipAnemone",
+      name: "Bubble-tip Anemone",
+      icon: "\u{1FAB8}",
+      price: 65,
+      difficulty: "hard",
+      type: "anemone",
+      lightNeed: "high",
+      alkConsume: 0,
+      calcConsume: 0,
+      flowNeed: "moderate",
+      minTank: 30,
+      desc: "A host sea anemone, not a coral: fleshy oral disc with rose bubble-tipped tentacles.",
+      care: "Requires an established stable aquarium, strong reef lighting and guarded pump intakes. Can wander and sting neighbors. Clownfish hosting is not guaranteed in real tanks.",
+      realPrice: "Varies"
+    },
     {
       id: "toadstoolLeather",
       name: "Toadstool Leather",
@@ -400,6 +686,17 @@
   ];
   var NEW_CLEANUP = [
     {
+      id: "serpentStar",
+      name: "Banded Serpent Star",
+      icon: "\u2B50",
+      price: 25,
+      realPrice: "Varies",
+      desc: "Five slender jointed arms surround a small central disc; a nocturnal scavenger, not an algae eater.",
+      count: 1,
+      algaeReduce: 0,
+      care: "Target-feed meaty food and provide rock crevices; acclimate carefully to stable salinity."
+    },
+    {
       id: "trochusSnail",
       name: "Trochus Snail",
       icon: "\u{1F40C}",
@@ -422,135 +719,6 @@
       care: "Provide mature substrate and stable salinity."
     }
   ];
-
-  // js/model/TankGeometry.js
-  var TANK_PRESETS = {
-    nano: { shape: "rectangular", width: 0.61, height: 0.42, depth: 0.305 },
-    medium: { shape: "rectangular", width: 1.22, height: 0.53, depth: 0.33 },
-    large: { shape: "rectangular", width: 1.22, height: 0.61, depth: 0.61 }
-  };
-  var clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-  var dimension = (n, fallback) => Number.isFinite(Number(n)) && Number(n) > 0 ? clamp(Number(n), 0.25, 3) : fallback;
-  function normalizeTankSpec(spec = {}, preset = "medium") {
-    const base = TANK_PRESETS[preset] || TANK_PRESETS.medium;
-    spec ||= {};
-    const shape = ["rectangular", "cube", "cylinder", "bowfront"].includes(
-      spec.shape
-    ) ? spec.shape : base.shape;
-    const width = dimension(spec.width, base.width);
-    return {
-      shape,
-      width,
-      height: shape === "cube" ? width : dimension(spec.height, base.height),
-      depth: shape === "cube" || shape === "cylinder" ? width : dimension(spec.depth, base.depth)
-    };
-  }
-  function getTankSpec(state = {}) {
-    return normalizeTankSpec(state.tankSpec, state.tankSize);
-  }
-  var waterLevel = (spec) => normalizeTankSpec(spec).height / 2 - 0.025;
-  function tankVolumeLiters(input) {
-    const s = normalizeTankSpec(input);
-    let area2 = s.width * s.depth;
-    if (s.shape === "cylinder") area2 = Math.PI * (s.width / 2) ** 2;
-    if (s.shape === "bowfront") area2 *= 1 - 0.22 / 3;
-    return area2 * (s.height - 0.025) * 1e3;
-  }
-  function frontBoundary(s, x, margin) {
-    if (s.shape !== "bowfront") return s.depth / 2 - margin;
-    const a = s.depth * 0.22 / (s.width / 2) ** 2;
-    return s.depth / 2 - a * x * x - margin * Math.sqrt(1 + (2 * a * x) ** 2) - a * margin * margin;
-  }
-  function containsPoint(input, x, z, margin = 0) {
-    const s = normalizeTankSpec(input);
-    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
-    margin = Math.max(0, margin);
-    if (s.shape === "cylinder")
-      return Math.hypot(x, z) <= Math.max(0, s.width / 2 - margin) + 1e-9;
-    if (Math.abs(x) > s.width / 2 - margin + 1e-9 || z < -s.depth / 2 + margin - 1e-9)
-      return false;
-    return z <= frontBoundary(s, x, margin) + 1e-9;
-  }
-  function constrainPoint(input, point, margin = 0) {
-    const s = normalizeTankSpec(input);
-    margin = clamp(
-      Number.isFinite(margin) ? margin : 0,
-      0,
-      Math.min(s.width, s.depth, s.height) * 0.45
-    );
-    let x = Number.isFinite(point.x) ? point.x : 0;
-    let z = Number.isFinite(point.z) ? point.z : 0;
-    if (s.shape === "cylinder") {
-      const r = s.width / 2 - margin;
-      const length = Math.hypot(x, z);
-      if (length > r) {
-        x *= r / length;
-        z *= r / length;
-      }
-    } else {
-      x = clamp(x, -s.width / 2 + margin, s.width / 2 - margin);
-      z = clamp(z, -s.depth / 2 + margin, frontBoundary(s, x, margin));
-    }
-    return {
-      x,
-      y: clamp(
-        Number.isFinite(point.y) ? point.y : 0,
-        -s.height / 2 + margin,
-        waterLevel(s) - margin
-      ),
-      z
-    };
-  }
-  function tankOutline(input, segments = 64) {
-    const s = normalizeTankSpec(input);
-    if (s.shape === "cylinder")
-      return Array.from({ length: segments }, (_, i) => ({
-        x: Math.cos(i / segments * Math.PI * 2) * s.width / 2,
-        z: Math.sin(i / segments * Math.PI * 2) * s.width / 2
-      }));
-    const points = [
-      { x: -s.width / 2, z: -s.depth / 2 },
-      { x: s.width / 2, z: -s.depth / 2 }
-    ];
-    if (s.shape === "bowfront") {
-      for (let i = 0; i <= segments / 2; i++) {
-        const x = s.width / 2 - i / (segments / 2) * s.width;
-        points.push({
-          x,
-          z: s.depth / 2 - s.depth * 0.22 * (x / (s.width / 2)) ** 2
-        });
-      }
-    } else
-      points.push(
-        { x: s.width / 2, z: s.depth / 2 },
-        { x: -s.width / 2, z: s.depth / 2 }
-      );
-    return points;
-  }
-  function substrateHeight(state) {
-    const spec = getTankSpec(state);
-    return state.equipment?.substrate > 0 ? clamp(
-      state.equipment.substrate * 0.453592 / 1500 / (tankVolumeLiters(spec) / 1e3 / (spec.height - 0.025)),
-      0.012,
-      0.065
-    ) : 0;
-  }
-  function defaultRockPlacements(input, floorY) {
-    const spec = normalizeTankSpec(input);
-    const size = Math.min(spec.depth * 0.42, spec.height * 0.45, 0.22);
-    return [-1, 0, 1].map((side, i) => ({
-      id: `rock-default-${i}`,
-      kind: "rock",
-      position: {
-        x: side * spec.width * 0.22,
-        y: floorY ?? -spec.height / 2,
-        z: i === 1 ? -spec.depth * 0.12 : spec.depth * 0.03
-      },
-      normal: { x: 0, y: 1, z: 0 },
-      rotation: i * 1.7,
-      size: size * (i === 1 ? 1.2 : 1)
-    }));
-  }
 
   // js/model/Husbandry.js
   var FOOD_TYPES = ["mixed", "algae", "meaty", "plankton", "copepods"];
@@ -578,7 +746,9 @@
       animal.growthProgress = 1 - Math.sqrt(1 - fraction);
     }
     animal.ageDays ??= Math.max(0, state.day - (animal.addedDay ?? state.day));
-    animal[key] ??= juvenile + (adult - juvenile) * animal.growthProgress;
+    animal.growthProgress = Math.max(0, Math.min(1, animal.growthProgress));
+    const matureSize = juvenile + (adult - juvenile) * (1 - Math.pow(1 - animal.growthProgress, 2));
+    animal[key] = Number.isFinite(animal[key]) ? Math.max(juvenile, Math.min(adult, animal[key])) : matureSize;
     animal.lastMealDay ??= Math.max(
       state.lastFed || 0,
       animal.addedDay ?? state.day
@@ -717,7 +887,7 @@
     });
     const tools = document.getElementById("aquascapeTools");
     if (!tools) return;
-    tools.innerHTML = `<p>Move purchased rocks and coral frags. Click a supported surface to commit; green is valid, red is blocked. Rotation snaps to 15\xB0. Escape cancels.</p>
+    tools.innerHTML = `<p>Move purchased rocks, decorations and coral frags. Click a supported surface to commit; green is valid, red is blocked. Rotation snaps to 15\xB0. Escape cancels.</p>
         <label><input id="placementEnabled" type="checkbox"> Edit placement</label>
         <label>Purchased item <select id="placementItem"><option value="">Select an item</option></select></label>
         <button id="placementBegin">Move selected</button>
@@ -738,7 +908,10 @@
       select.replaceChildren(new window.Option("Select an item", ""));
       rocks.forEach(
         (item, i) => select.add(
-          new window.Option(`Live rock ${i + 1}`, `rock:${item.id}`)
+          new window.Option(
+            item.name || `Live rock ${i + 1}`,
+            `rock:${item.id}`
+          )
         )
       );
       state.corals.filter((c) => c.alive !== false).forEach(
@@ -767,13 +940,17 @@
     );
     document.getElementById("placementRight").addEventListener("click", () => engine.renderer.placement?.rotate(15));
     document.getElementById("placementCancel").addEventListener("click", () => engine.renderer.placement?.cancel());
+    let lastPlacementSelection = null;
     engine.renderer.onPlacementStatus = (status) => {
+      const selectionId = status.selection?.id || null;
       document.getElementById("placementStatus").textContent = `${status.reason || ""}${status.selection ? ` Rotation: ${status.rotation || 0}\xB0` : ""}`;
       if (engine.renderer.placement?.enabled) {
         enabled.checked = true;
-        document.getElementById("aquascapePanel").open = true;
+        if (selectionId && selectionId !== lastPlacementSelection)
+          document.getElementById("aquascapePanel").open = true;
         engine.renderer.controls.enabled = false;
       }
+      lastPlacementSelection = selectionId;
     };
     engine.renderer.onPlacementCommit = () => {
       engine.save();
@@ -812,11 +989,11 @@
       const parts = path.split(".");
       const lastKey = parts.pop();
       let current = this.state;
-      for (const part of parts) {
-        if (current[part] === void 0) {
-          current[part] = {};
+      for (const part2 of parts) {
+        if (current[part2] === void 0) {
+          current[part2] = {};
         }
-        current = current[part];
+        current = current[part2];
       }
       current[lastKey] = value;
     }
@@ -948,6 +1125,7 @@
 
   // js/model/StoreService.js
   var EQUIPMENT_STORE = [
+    ...DECOR_STORE,
     {
       id: "tank",
       name: "Glass Aquarium",
@@ -1921,6 +2099,18 @@
       const item = EQUIPMENT_STORE.find((i) => i.id === itemId);
       if (!item) return { canBuy: false, reason: "Item not found" };
       const price = this.getItemPrice(item, state.tankSize);
+      if (["decor", "background"].includes(item.category) && !state.equipment.tank)
+        return { canBuy: false, reason: "Need tank first" };
+      if (item.category === "background" && state.equipment[itemId])
+        return { canBuy: true, price: 0 };
+      if (item.category === "decor" && !planDecorPlacement(
+        state,
+        DECOR_CATALOG.find((t) => t.id === itemId)
+      ))
+        return {
+          canBuy: false,
+          reason: "No free floor space for this decoration. Move existing items or choose a smaller decoration."
+        };
       if (state.budget < price)
         return { canBuy: false, reason: "Insufficient budget" };
       if (!item.stackable && itemId !== "substrate" && state.equipment[itemId]) {
@@ -7417,14 +7607,14 @@
       if (isRootObject) {
         const geometries = extractFromCache(meta.geometries);
         const materials = extractFromCache(meta.materials);
-        const textures = extractFromCache(meta.textures);
+        const textures2 = extractFromCache(meta.textures);
         const images = extractFromCache(meta.images);
         const shapes = extractFromCache(meta.shapes);
         const skeletons = extractFromCache(meta.skeletons);
         const animations = extractFromCache(meta.animations);
         if (geometries.length > 0) output.geometries = geometries;
         if (materials.length > 0) output.materials = materials;
-        if (textures.length > 0) output.textures = textures;
+        if (textures2.length > 0) output.textures = textures2;
         if (images.length > 0) output.images = images;
         if (shapes.length > 0) output.shapes = shapes;
         if (skeletons.length > 0) output.skeletons = skeletons;
@@ -7983,9 +8173,9 @@
         return values;
       }
       if (isRoot) {
-        const textures = extractFromCache(meta.textures);
+        const textures2 = extractFromCache(meta.textures);
         const images = extractFromCache(meta.images);
-        if (textures.length > 0) data.textures = textures;
+        if (textures2.length > 0) data.textures = textures2;
         if (images.length > 0) data.images = images;
       }
       return data;
@@ -9469,11 +9659,11 @@
   var _intersectionPoint = /* @__PURE__ */ new Vector3();
   var _intersectionPointWorld = /* @__PURE__ */ new Vector3();
   var Mesh = class extends Object3D {
-    constructor(geometry = new BufferGeometry(), material2 = new MeshBasicMaterial()) {
+    constructor(geometry = new BufferGeometry(), material3 = new MeshBasicMaterial()) {
       super();
       this.type = "Mesh";
       this.geometry = geometry;
-      this.material = material2;
+      this.material = material3;
       this.updateMorphTargets();
     }
     copy(source) {
@@ -9514,9 +9704,9 @@
     }
     raycast(raycaster, intersects2) {
       const geometry = this.geometry;
-      const material2 = this.material;
+      const material3 = this.material;
       const matrixWorld = this.matrixWorld;
-      if (material2 === void 0) return;
+      if (material3 === void 0) return;
       if (geometry.boundingSphere === null) geometry.computeBoundingSphere();
       _sphere$3.copy(geometry.boundingSphere);
       _sphere$3.applyMatrix4(matrixWorld);
@@ -9537,10 +9727,10 @@
         const groups = geometry.groups;
         const drawRange = geometry.drawRange;
         if (index !== null) {
-          if (Array.isArray(material2)) {
+          if (Array.isArray(material3)) {
             for (let i = 0, il = groups.length; i < il; i++) {
               const group = groups[i];
-              const groupMaterial = material2[group.materialIndex];
+              const groupMaterial = material3[group.materialIndex];
               const start = Math.max(group.start, drawRange.start);
               const end = Math.min(group.start + group.count, drawRange.start + drawRange.count);
               for (let j = start, jl = end; j < jl; j += 3) {
@@ -9562,7 +9752,7 @@
               const a = index.getX(i);
               const b = index.getX(i + 1);
               const c = index.getX(i + 2);
-              intersection = checkBufferGeometryIntersection(this, material2, raycaster, _ray$2, position, morphPosition, morphTargetsRelative, uv, uv2, a, b, c);
+              intersection = checkBufferGeometryIntersection(this, material3, raycaster, _ray$2, position, morphPosition, morphTargetsRelative, uv, uv2, a, b, c);
               if (intersection) {
                 intersection.faceIndex = Math.floor(i / 3);
                 intersects2.push(intersection);
@@ -9570,10 +9760,10 @@
             }
           }
         } else if (position !== void 0) {
-          if (Array.isArray(material2)) {
+          if (Array.isArray(material3)) {
             for (let i = 0, il = groups.length; i < il; i++) {
               const group = groups[i];
-              const groupMaterial = material2[group.materialIndex];
+              const groupMaterial = material3[group.materialIndex];
               const start = Math.max(group.start, drawRange.start);
               const end = Math.min(group.start + group.count, drawRange.start + drawRange.count);
               for (let j = start, jl = end; j < jl; j += 3) {
@@ -9595,7 +9785,7 @@
               const a = i;
               const b = i + 1;
               const c = i + 2;
-              intersection = checkBufferGeometryIntersection(this, material2, raycaster, _ray$2, position, morphPosition, morphTargetsRelative, uv, uv2, a, b, c);
+              intersection = checkBufferGeometryIntersection(this, material3, raycaster, _ray$2, position, morphPosition, morphTargetsRelative, uv, uv2, a, b, c);
               if (intersection) {
                 intersection.faceIndex = Math.floor(i / 3);
                 intersects2.push(intersection);
@@ -9609,12 +9799,12 @@
     }
   };
   Mesh.prototype.isMesh = true;
-  function checkIntersection(object, material2, raycaster, ray, pA, pB, pC, point) {
+  function checkIntersection(object, material3, raycaster, ray, pA, pB, pC, point) {
     let intersect;
-    if (material2.side === BackSide) {
+    if (material3.side === BackSide) {
       intersect = ray.intersectTriangle(pC, pB, pA, true, point);
     } else {
-      intersect = ray.intersectTriangle(pA, pB, pC, material2.side !== DoubleSide, point);
+      intersect = ray.intersectTriangle(pA, pB, pC, material3.side !== DoubleSide, point);
     }
     if (intersect === null) return null;
     _intersectionPointWorld.copy(point);
@@ -9627,12 +9817,12 @@
       object
     };
   }
-  function checkBufferGeometryIntersection(object, material2, raycaster, ray, position, morphPosition, morphTargetsRelative, uv, uv2, a, b, c) {
+  function checkBufferGeometryIntersection(object, material3, raycaster, ray, position, morphPosition, morphTargetsRelative, uv, uv2, a, b, c) {
     _vA$1.fromBufferAttribute(position, a);
     _vB$1.fromBufferAttribute(position, b);
     _vC$1.fromBufferAttribute(position, c);
     const morphInfluences = object.morphTargetInfluences;
-    if (material2.morphTargets && morphPosition && morphInfluences) {
+    if (material3.morphTargets && morphPosition && morphInfluences) {
       _morphA.set(0, 0, 0);
       _morphB.set(0, 0, 0);
       _morphC.set(0, 0, 0);
@@ -9657,12 +9847,12 @@
       _vB$1.add(_morphB);
       _vC$1.add(_morphC);
     }
-    if (object.isSkinnedMesh && material2.skinning) {
+    if (object.isSkinnedMesh && material3.skinning) {
       object.boneTransform(a, _vA$1);
       object.boneTransform(b, _vB$1);
       object.boneTransform(c, _vC$1);
     }
-    const intersection = checkIntersection(object, material2, raycaster, ray, _vA$1, _vB$1, _vC$1, _intersectionPoint);
+    const intersection = checkIntersection(object, material3, raycaster, ray, _vA$1, _vB$1, _vC$1, _intersectionPoint);
     if (intersection) {
       if (uv) {
         _uvA$1.fromBufferAttribute(uv, a);
@@ -10261,7 +10451,7 @@
         )
       };
       const geometry = new BoxGeometry(5, 5, 5);
-      const material2 = new ShaderMaterial({
+      const material3 = new ShaderMaterial({
         name: "CubemapFromEquirect",
         uniforms: cloneUniforms(shader.uniforms),
         vertexShader: shader.vertexShader,
@@ -10269,8 +10459,8 @@
         side: BackSide,
         blending: NoBlending
       });
-      material2.uniforms.tEquirect.value = texture;
-      const mesh2 = new Mesh(geometry, material2);
+      material3.uniforms.tEquirect.value = texture;
+      const mesh2 = new Mesh(geometry, material3);
       const currentMinFilter = texture.minFilter;
       if (texture.minFilter === LinearMipmapLinearFilter) texture.minFilter = LinearFilter;
       const camera = new CubeCamera(1, 10, this);
@@ -11336,10 +11526,10 @@
     const bindingStates = {};
     const defaultState = createBindingState(null);
     let currentState = defaultState;
-    function setup(object, material2, program, geometry, index) {
+    function setup(object, material3, program, geometry, index) {
       let updateBuffers = false;
       if (vaoAvailable) {
-        const state = getBindingState(geometry, program, material2);
+        const state = getBindingState(geometry, program, material3);
         if (currentState !== state) {
           currentState = state;
           bindVertexArrayObject(currentState.object);
@@ -11347,7 +11537,7 @@
         updateBuffers = needsUpdate(geometry, index);
         if (updateBuffers) saveCache(geometry, index);
       } else {
-        const wireframe = material2.wireframe === true;
+        const wireframe = material3.wireframe === true;
         if (currentState.geometry !== geometry.id || currentState.program !== program.id || currentState.wireframe !== wireframe) {
           currentState.geometry = geometry.id;
           currentState.program = program.id;
@@ -11362,7 +11552,7 @@
         attributes.update(index, 34963);
       }
       if (updateBuffers) {
-        setupVertexAttributes(object, material2, program, geometry);
+        setupVertexAttributes(object, material3, program, geometry);
         if (index !== null) {
           gl.bindBuffer(34963, attributes.get(index).buffer);
         }
@@ -11380,8 +11570,8 @@
       if (capabilities.isWebGL2) return gl.deleteVertexArray(vao);
       return extension.deleteVertexArrayOES(vao);
     }
-    function getBindingState(geometry, program, material2) {
-      const wireframe = material2.wireframe === true;
+    function getBindingState(geometry, program, material3) {
+      const wireframe = material3.wireframe === true;
       let programMap = bindingStates[geometry.id];
       if (programMap === void 0) {
         programMap = {};
@@ -11496,14 +11686,14 @@
         gl.vertexAttribPointer(index, size, type, normalized, stride, offset);
       }
     }
-    function setupVertexAttributes(object, material2, program, geometry) {
+    function setupVertexAttributes(object, material3, program, geometry) {
       if (capabilities.isWebGL2 === false && (object.isInstancedMesh || geometry.isInstancedBufferGeometry)) {
         if (extensions.get("ANGLE_instanced_arrays") === null) return;
       }
       initAttributes();
       const geometryAttributes = geometry.attributes;
       const programAttributes = program.getAttributes();
-      const materialDefaultAttributeValues = material2.defaultAttributeValues;
+      const materialDefaultAttributeValues = material3.defaultAttributeValues;
       for (const name in programAttributes) {
         const programAttribute = programAttributes[name];
         if (programAttribute >= 0) {
@@ -11770,9 +11960,9 @@
       renderingShadows = false;
       resetGlobalState();
     };
-    this.setState = function(material2, camera, useCache) {
-      const planes = material2.clippingPlanes, clipIntersection = material2.clipIntersection, clipShadows = material2.clipShadows;
-      const materialProperties = properties.get(material2);
+    this.setState = function(material3, camera, useCache) {
+      const planes = material3.clippingPlanes, clipIntersection = material3.clipIntersection, clipShadows = material3.clipShadows;
+      const materialProperties = properties.get(material3);
       if (!localClippingEnabled || planes === null || planes.length === 0 || renderingShadows && !clipShadows) {
         if (renderingShadows) {
           projectPlanes(null);
@@ -12127,7 +12317,7 @@
     for (let i = 0; i < 8; i++) {
       workInfluences[i] = [i, 0];
     }
-    function update(object, geometry, material2, program) {
+    function update(object, geometry, material3, program) {
       const objectInfluences = object.morphTargetInfluences;
       const length = objectInfluences === void 0 ? 0 : objectInfluences.length;
       let influences = influencesList[geometry.id];
@@ -12154,8 +12344,8 @@
         }
       }
       workInfluences.sort(numericalSort);
-      const morphTargets = material2.morphTargets && geometry.morphAttributes.position;
-      const morphNormals = material2.morphNormals && geometry.morphAttributes.normal;
+      const morphTargets = material3.morphTargets && geometry.morphAttributes.position;
+      const morphNormals = material3.morphNormals && geometry.morphAttributes.normal;
       let morphInfluencesSum = 0;
       for (let i = 0; i < 8; i++) {
         const influence = workInfluences[i];
@@ -12290,14 +12480,14 @@
       a[i] = b[i];
     }
   }
-  function allocTexUnits(textures, n) {
+  function allocTexUnits(textures2, n) {
     let r = arrayCacheI32[n];
     if (r === void 0) {
       r = new Int32Array(n);
       arrayCacheI32[n] = r;
     }
     for (let i = 0; i !== n; ++i) {
-      r[i] = textures.allocateTextureUnit();
+      r[i] = textures2.allocateTextureUnit();
     }
     return r;
   }
@@ -12449,41 +12639,41 @@
     gl.uniform4uiv(this.addr, v2);
     copyArray(cache2, v2);
   }
-  function setValueT1(gl, v2, textures) {
+  function setValueT1(gl, v2, textures2) {
     const cache2 = this.cache;
-    const unit = textures.allocateTextureUnit();
+    const unit = textures2.allocateTextureUnit();
     if (cache2[0] !== unit) {
       gl.uniform1i(this.addr, unit);
       cache2[0] = unit;
     }
-    textures.safeSetTexture2D(v2 || emptyTexture, unit);
+    textures2.safeSetTexture2D(v2 || emptyTexture, unit);
   }
-  function setValueT3D1(gl, v2, textures) {
+  function setValueT3D1(gl, v2, textures2) {
     const cache2 = this.cache;
-    const unit = textures.allocateTextureUnit();
+    const unit = textures2.allocateTextureUnit();
     if (cache2[0] !== unit) {
       gl.uniform1i(this.addr, unit);
       cache2[0] = unit;
     }
-    textures.setTexture3D(v2 || emptyTexture3d, unit);
+    textures2.setTexture3D(v2 || emptyTexture3d, unit);
   }
-  function setValueT6(gl, v2, textures) {
+  function setValueT6(gl, v2, textures2) {
     const cache2 = this.cache;
-    const unit = textures.allocateTextureUnit();
+    const unit = textures2.allocateTextureUnit();
     if (cache2[0] !== unit) {
       gl.uniform1i(this.addr, unit);
       cache2[0] = unit;
     }
-    textures.safeSetTextureCube(v2 || emptyCubeTexture, unit);
+    textures2.safeSetTextureCube(v2 || emptyCubeTexture, unit);
   }
-  function setValueT2DArray1(gl, v2, textures) {
+  function setValueT2DArray1(gl, v2, textures2) {
     const cache2 = this.cache;
-    const unit = textures.allocateTextureUnit();
+    const unit = textures2.allocateTextureUnit();
     if (cache2[0] !== unit) {
       gl.uniform1i(this.addr, unit);
       cache2[0] = unit;
     }
-    textures.setTexture2DArray(v2 || emptyTexture2dArray, unit);
+    textures2.setTexture2DArray(v2 || emptyTexture2dArray, unit);
   }
   function getSingularSetter(type) {
     switch (type) {
@@ -12621,20 +12811,20 @@
   function setValueV4uiArray(gl, v2) {
     gl.uniform4uiv(this.addr, v2);
   }
-  function setValueT1Array(gl, v2, textures) {
+  function setValueT1Array(gl, v2, textures2) {
     const n = v2.length;
-    const units = allocTexUnits(textures, n);
+    const units = allocTexUnits(textures2, n);
     gl.uniform1iv(this.addr, units);
     for (let i = 0; i !== n; ++i) {
-      textures.safeSetTexture2D(v2[i] || emptyTexture, units[i]);
+      textures2.safeSetTexture2D(v2[i] || emptyTexture, units[i]);
     }
   }
-  function setValueT6Array(gl, v2, textures) {
+  function setValueT6Array(gl, v2, textures2) {
     const n = v2.length;
-    const units = allocTexUnits(textures, n);
+    const units = allocTexUnits(textures2, n);
     gl.uniform1iv(this.addr, units);
     for (let i = 0; i !== n; ++i) {
-      textures.safeSetTextureCube(v2[i] || emptyCubeTexture, units[i]);
+      textures2.safeSetTextureCube(v2[i] || emptyCubeTexture, units[i]);
     }
   }
   function getPureArraySetter(type) {
@@ -12733,11 +12923,11 @@
     this.seq = [];
     this.map = {};
   }
-  StructuredUniform.prototype.setValue = function(gl, value, textures) {
+  StructuredUniform.prototype.setValue = function(gl, value, textures2) {
     const seq = this.seq;
     for (let i = 0, n = seq.length; i !== n; ++i) {
       const u = seq[i];
-      u.setValue(gl, value[u.id], textures);
+      u.setValue(gl, value[u.id], textures2);
     }
   };
   var RePathPart = /(\w+)(\])?(\[|\.)?/g;
@@ -12776,19 +12966,19 @@
       parseUniform(info, addr, this);
     }
   }
-  WebGLUniforms.prototype.setValue = function(gl, name, value, textures) {
+  WebGLUniforms.prototype.setValue = function(gl, name, value, textures2) {
     const u = this.map[name];
-    if (u !== void 0) u.setValue(gl, value, textures);
+    if (u !== void 0) u.setValue(gl, value, textures2);
   };
   WebGLUniforms.prototype.setOptional = function(gl, object, name) {
     const v2 = object[name];
     if (v2 !== void 0) this.setValue(gl, name, v2);
   };
-  WebGLUniforms.upload = function(gl, seq, values, textures) {
+  WebGLUniforms.upload = function(gl, seq, values, textures2) {
     for (let i = 0, n = seq.length; i !== n; ++i) {
       const u = seq[i], v2 = values[u.id];
       if (v2.needsUpdate !== false) {
-        u.setValue(gl, v2.value, textures);
+        u.setValue(gl, v2.value, textures2);
       }
     }
   };
@@ -13429,16 +13619,16 @@
       }
       return encoding;
     }
-    function getParameters(material2, lights, shadows, scene, object) {
+    function getParameters(material3, lights, shadows, scene, object) {
       const fog = scene.fog;
-      const environment = material2.isMeshStandardMaterial ? scene.environment : null;
-      const envMap = cubemaps.get(material2.envMap || environment);
-      const shaderID = shaderIDs[material2.type];
+      const environment = material3.isMeshStandardMaterial ? scene.environment : null;
+      const envMap = cubemaps.get(material3.envMap || environment);
+      const shaderID = shaderIDs[material3.type];
       const maxBones = object.isSkinnedMesh ? getMaxBones(object) : 0;
-      if (material2.precision !== null) {
-        precision = capabilities.getMaxPrecision(material2.precision);
-        if (precision !== material2.precision) {
-          console.warn("THREE.WebGLProgram.getParameters:", material2.precision, "not supported, using", precision, "instead.");
+      if (material3.precision !== null) {
+        precision = capabilities.getMaxPrecision(material3.precision);
+        if (precision !== material3.precision) {
+          console.warn("THREE.WebGLProgram.getParameters:", material3.precision, "not supported, using", precision, "instead.");
         }
       }
       let vertexShader, fragmentShader;
@@ -13447,69 +13637,69 @@
         vertexShader = shader.vertexShader;
         fragmentShader = shader.fragmentShader;
       } else {
-        vertexShader = material2.vertexShader;
-        fragmentShader = material2.fragmentShader;
+        vertexShader = material3.vertexShader;
+        fragmentShader = material3.fragmentShader;
       }
       const currentRenderTarget = renderer.getRenderTarget();
       const parameters = {
         isWebGL2,
         shaderID,
-        shaderName: material2.type,
+        shaderName: material3.type,
         vertexShader,
         fragmentShader,
-        defines: material2.defines,
-        isRawShaderMaterial: material2.isRawShaderMaterial === true,
-        glslVersion: material2.glslVersion,
+        defines: material3.defines,
+        isRawShaderMaterial: material3.isRawShaderMaterial === true,
+        glslVersion: material3.glslVersion,
         precision,
         instancing: object.isInstancedMesh === true,
         instancingColor: object.isInstancedMesh === true && object.instanceColor !== null,
         supportsVertexTextures: vertexTextures,
         outputEncoding: currentRenderTarget !== null ? getTextureEncodingFromMap(currentRenderTarget.texture) : renderer.outputEncoding,
-        map: !!material2.map,
-        mapEncoding: getTextureEncodingFromMap(material2.map),
-        matcap: !!material2.matcap,
-        matcapEncoding: getTextureEncodingFromMap(material2.matcap),
+        map: !!material3.map,
+        mapEncoding: getTextureEncodingFromMap(material3.map),
+        matcap: !!material3.matcap,
+        matcapEncoding: getTextureEncodingFromMap(material3.matcap),
         envMap: !!envMap,
         envMapMode: envMap && envMap.mapping,
         envMapEncoding: getTextureEncodingFromMap(envMap),
         envMapCubeUV: !!envMap && (envMap.mapping === CubeUVReflectionMapping || envMap.mapping === CubeUVRefractionMapping),
-        lightMap: !!material2.lightMap,
-        lightMapEncoding: getTextureEncodingFromMap(material2.lightMap),
-        aoMap: !!material2.aoMap,
-        emissiveMap: !!material2.emissiveMap,
-        emissiveMapEncoding: getTextureEncodingFromMap(material2.emissiveMap),
-        bumpMap: !!material2.bumpMap,
-        normalMap: !!material2.normalMap,
-        objectSpaceNormalMap: material2.normalMapType === ObjectSpaceNormalMap,
-        tangentSpaceNormalMap: material2.normalMapType === TangentSpaceNormalMap,
-        clearcoatMap: !!material2.clearcoatMap,
-        clearcoatRoughnessMap: !!material2.clearcoatRoughnessMap,
-        clearcoatNormalMap: !!material2.clearcoatNormalMap,
-        displacementMap: !!material2.displacementMap,
-        roughnessMap: !!material2.roughnessMap,
-        metalnessMap: !!material2.metalnessMap,
-        specularMap: !!material2.specularMap,
-        alphaMap: !!material2.alphaMap,
-        gradientMap: !!material2.gradientMap,
-        sheen: !!material2.sheen,
-        transmissionMap: !!material2.transmissionMap,
-        combine: material2.combine,
-        vertexTangents: material2.normalMap && material2.vertexTangents,
-        vertexColors: material2.vertexColors,
-        vertexAlphas: material2.vertexColors === true && object.geometry && object.geometry.attributes.color && object.geometry.attributes.color.itemSize === 4,
-        vertexUvs: !!material2.map || !!material2.bumpMap || !!material2.normalMap || !!material2.specularMap || !!material2.alphaMap || !!material2.emissiveMap || !!material2.roughnessMap || !!material2.metalnessMap || !!material2.clearcoatMap || !!material2.clearcoatRoughnessMap || !!material2.clearcoatNormalMap || !!material2.displacementMap || !!material2.transmissionMap,
-        uvsVertexOnly: !(!!material2.map || !!material2.bumpMap || !!material2.normalMap || !!material2.specularMap || !!material2.alphaMap || !!material2.emissiveMap || !!material2.roughnessMap || !!material2.metalnessMap || !!material2.clearcoatNormalMap || !!material2.transmissionMap) && !!material2.displacementMap,
+        lightMap: !!material3.lightMap,
+        lightMapEncoding: getTextureEncodingFromMap(material3.lightMap),
+        aoMap: !!material3.aoMap,
+        emissiveMap: !!material3.emissiveMap,
+        emissiveMapEncoding: getTextureEncodingFromMap(material3.emissiveMap),
+        bumpMap: !!material3.bumpMap,
+        normalMap: !!material3.normalMap,
+        objectSpaceNormalMap: material3.normalMapType === ObjectSpaceNormalMap,
+        tangentSpaceNormalMap: material3.normalMapType === TangentSpaceNormalMap,
+        clearcoatMap: !!material3.clearcoatMap,
+        clearcoatRoughnessMap: !!material3.clearcoatRoughnessMap,
+        clearcoatNormalMap: !!material3.clearcoatNormalMap,
+        displacementMap: !!material3.displacementMap,
+        roughnessMap: !!material3.roughnessMap,
+        metalnessMap: !!material3.metalnessMap,
+        specularMap: !!material3.specularMap,
+        alphaMap: !!material3.alphaMap,
+        gradientMap: !!material3.gradientMap,
+        sheen: !!material3.sheen,
+        transmissionMap: !!material3.transmissionMap,
+        combine: material3.combine,
+        vertexTangents: material3.normalMap && material3.vertexTangents,
+        vertexColors: material3.vertexColors,
+        vertexAlphas: material3.vertexColors === true && object.geometry && object.geometry.attributes.color && object.geometry.attributes.color.itemSize === 4,
+        vertexUvs: !!material3.map || !!material3.bumpMap || !!material3.normalMap || !!material3.specularMap || !!material3.alphaMap || !!material3.emissiveMap || !!material3.roughnessMap || !!material3.metalnessMap || !!material3.clearcoatMap || !!material3.clearcoatRoughnessMap || !!material3.clearcoatNormalMap || !!material3.displacementMap || !!material3.transmissionMap,
+        uvsVertexOnly: !(!!material3.map || !!material3.bumpMap || !!material3.normalMap || !!material3.specularMap || !!material3.alphaMap || !!material3.emissiveMap || !!material3.roughnessMap || !!material3.metalnessMap || !!material3.clearcoatNormalMap || !!material3.transmissionMap) && !!material3.displacementMap,
         fog: !!fog,
-        useFog: material2.fog,
+        useFog: material3.fog,
         fogExp2: fog && fog.isFogExp2,
-        flatShading: !!material2.flatShading,
-        sizeAttenuation: material2.sizeAttenuation,
+        flatShading: !!material3.flatShading,
+        sizeAttenuation: material3.sizeAttenuation,
         logarithmicDepthBuffer,
-        skinning: material2.skinning && maxBones > 0,
+        skinning: material3.skinning && maxBones > 0,
         maxBones,
         useVertexTexture: floatVertexTextures,
-        morphTargets: material2.morphTargets,
-        morphNormals: material2.morphNormals,
+        morphTargets: material3.morphTargets,
+        morphNormals: material3.morphNormals,
         numDirLights: lights.directional.length,
         numPointLights: lights.point.length,
         numSpotLights: lights.spot.length,
@@ -13520,25 +13710,25 @@
         numSpotLightShadows: lights.spotShadowMap.length,
         numClippingPlanes: clipping.numPlanes,
         numClipIntersection: clipping.numIntersection,
-        dithering: material2.dithering,
+        dithering: material3.dithering,
         shadowMapEnabled: renderer.shadowMap.enabled && shadows.length > 0,
         shadowMapType: renderer.shadowMap.type,
-        toneMapping: material2.toneMapped ? renderer.toneMapping : NoToneMapping,
+        toneMapping: material3.toneMapped ? renderer.toneMapping : NoToneMapping,
         physicallyCorrectLights: renderer.physicallyCorrectLights,
-        premultipliedAlpha: material2.premultipliedAlpha,
-        alphaTest: material2.alphaTest,
-        doubleSided: material2.side === DoubleSide,
-        flipSided: material2.side === BackSide,
-        depthPacking: material2.depthPacking !== void 0 ? material2.depthPacking : false,
-        index0AttributeName: material2.index0AttributeName,
-        extensionDerivatives: material2.extensions && material2.extensions.derivatives,
-        extensionFragDepth: material2.extensions && material2.extensions.fragDepth,
-        extensionDrawBuffers: material2.extensions && material2.extensions.drawBuffers,
-        extensionShaderTextureLOD: material2.extensions && material2.extensions.shaderTextureLOD,
+        premultipliedAlpha: material3.premultipliedAlpha,
+        alphaTest: material3.alphaTest,
+        doubleSided: material3.side === DoubleSide,
+        flipSided: material3.side === BackSide,
+        depthPacking: material3.depthPacking !== void 0 ? material3.depthPacking : false,
+        index0AttributeName: material3.index0AttributeName,
+        extensionDerivatives: material3.extensions && material3.extensions.derivatives,
+        extensionFragDepth: material3.extensions && material3.extensions.fragDepth,
+        extensionDrawBuffers: material3.extensions && material3.extensions.drawBuffers,
+        extensionShaderTextureLOD: material3.extensions && material3.extensions.shaderTextureLOD,
         rendererExtensionFragDepth: isWebGL2 || extensions.has("EXT_frag_depth"),
         rendererExtensionDrawBuffers: isWebGL2 || extensions.has("WEBGL_draw_buffers"),
         rendererExtensionShaderTextureLod: isWebGL2 || extensions.has("EXT_shader_texture_lod"),
-        customProgramCacheKey: material2.customProgramCacheKey()
+        customProgramCacheKey: material3.customProgramCacheKey()
       };
       return parameters;
     }
@@ -13566,14 +13756,14 @@
       array.push(parameters.customProgramCacheKey);
       return array.join();
     }
-    function getUniforms(material2) {
-      const shaderID = shaderIDs[material2.type];
+    function getUniforms(material3) {
+      const shaderID = shaderIDs[material3.type];
       let uniforms;
       if (shaderID) {
         const shader = ShaderLib[shaderID];
         uniforms = UniformsUtils.clone(shader.uniforms);
       } else {
-        uniforms = material2.uniforms;
+        uniforms = material3.uniforms;
       }
       return uniforms;
     }
@@ -13674,15 +13864,15 @@
       opaque.length = 0;
       transparent.length = 0;
     }
-    function getNextRenderItem(object, geometry, material2, groupOrder, z, group) {
+    function getNextRenderItem(object, geometry, material3, groupOrder, z, group) {
       let renderItem = renderItems[renderItemsIndex];
-      const materialProperties = properties.get(material2);
+      const materialProperties = properties.get(material3);
       if (renderItem === void 0) {
         renderItem = {
           id: object.id,
           object,
           geometry,
-          material: material2,
+          material: material3,
           program: materialProperties.program || defaultProgram,
           groupOrder,
           renderOrder: object.renderOrder,
@@ -13694,7 +13884,7 @@
         renderItem.id = object.id;
         renderItem.object = object;
         renderItem.geometry = geometry;
-        renderItem.material = material2;
+        renderItem.material = material3;
         renderItem.program = materialProperties.program || defaultProgram;
         renderItem.groupOrder = groupOrder;
         renderItem.renderOrder = object.renderOrder;
@@ -13704,13 +13894,13 @@
       renderItemsIndex++;
       return renderItem;
     }
-    function push(object, geometry, material2, groupOrder, z, group) {
-      const renderItem = getNextRenderItem(object, geometry, material2, groupOrder, z, group);
-      (material2.transparent === true ? transparent : opaque).push(renderItem);
+    function push(object, geometry, material3, groupOrder, z, group) {
+      const renderItem = getNextRenderItem(object, geometry, material3, groupOrder, z, group);
+      (material3.transparent === true ? transparent : opaque).push(renderItem);
     }
-    function unshift(object, geometry, material2, groupOrder, z, group) {
-      const renderItem = getNextRenderItem(object, geometry, material2, groupOrder, z, group);
-      (material2.transparent === true ? transparent : opaque).unshift(renderItem);
+    function unshift(object, geometry, material3, groupOrder, z, group) {
+      const renderItem = getNextRenderItem(object, geometry, material3, groupOrder, z, group);
+      (material3.transparent === true ? transparent : opaque).unshift(renderItem);
     }
     function sort(customOpaqueSort, customTransparentSort) {
       if (opaque.length > 1) opaque.sort(customOpaqueSort || painterSortStable);
@@ -14356,30 +14546,30 @@
     }
     function getDepthMaterialVariant(useMorphing, useSkinning, useInstancing) {
       const index = useMorphing << 0 | useSkinning << 1 | useInstancing << 2;
-      let material2 = _depthMaterials[index];
-      if (material2 === void 0) {
-        material2 = new MeshDepthMaterial({
+      let material3 = _depthMaterials[index];
+      if (material3 === void 0) {
+        material3 = new MeshDepthMaterial({
           depthPacking: RGBADepthPacking,
           morphTargets: useMorphing,
           skinning: useSkinning
         });
-        _depthMaterials[index] = material2;
+        _depthMaterials[index] = material3;
       }
-      return material2;
+      return material3;
     }
     function getDistanceMaterialVariant(useMorphing, useSkinning, useInstancing) {
       const index = useMorphing << 0 | useSkinning << 1 | useInstancing << 2;
-      let material2 = _distanceMaterials[index];
-      if (material2 === void 0) {
-        material2 = new MeshDistanceMaterial({
+      let material3 = _distanceMaterials[index];
+      if (material3 === void 0) {
+        material3 = new MeshDistanceMaterial({
           morphTargets: useMorphing,
           skinning: useSkinning
         });
-        _distanceMaterials[index] = material2;
+        _distanceMaterials[index] = material3;
       }
-      return material2;
+      return material3;
     }
-    function getDepthMaterial(object, geometry, material2, light, shadowCameraNear, shadowCameraFar, type) {
+    function getDepthMaterial(object, geometry, material3, light, shadowCameraNear, shadowCameraFar, type) {
       let result = null;
       let getMaterialVariant = getDepthMaterialVariant;
       let customMaterial = object.customDepthMaterial;
@@ -14389,12 +14579,12 @@
       }
       if (customMaterial === void 0) {
         let useMorphing = false;
-        if (material2.morphTargets === true) {
+        if (material3.morphTargets === true) {
           useMorphing = geometry.morphAttributes && geometry.morphAttributes.position && geometry.morphAttributes.position.length > 0;
         }
         let useSkinning = false;
         if (object.isSkinnedMesh === true) {
-          if (material2.skinning === true) {
+          if (material3.skinning === true) {
             useSkinning = true;
           } else {
             console.warn("THREE.WebGLShadowMap: THREE.SkinnedMesh with material.skinning set to false:", object);
@@ -14405,8 +14595,8 @@
       } else {
         result = customMaterial;
       }
-      if (_renderer.localClippingEnabled && material2.clipShadows === true && material2.clippingPlanes.length !== 0) {
-        const keyA = result.uuid, keyB = material2.uuid;
+      if (_renderer.localClippingEnabled && material3.clipShadows === true && material3.clippingPlanes.length !== 0) {
+        const keyA = result.uuid, keyB = material3.uuid;
         let materialsForVariant = _materialCache[keyA];
         if (materialsForVariant === void 0) {
           materialsForVariant = {};
@@ -14419,18 +14609,18 @@
         }
         result = cachedMaterial;
       }
-      result.visible = material2.visible;
-      result.wireframe = material2.wireframe;
+      result.visible = material3.visible;
+      result.wireframe = material3.wireframe;
       if (type === VSMShadowMap) {
-        result.side = material2.shadowSide !== null ? material2.shadowSide : material2.side;
+        result.side = material3.shadowSide !== null ? material3.shadowSide : material3.side;
       } else {
-        result.side = material2.shadowSide !== null ? material2.shadowSide : shadowSide[material2.side];
+        result.side = material3.shadowSide !== null ? material3.shadowSide : shadowSide[material3.side];
       }
-      result.clipShadows = material2.clipShadows;
-      result.clippingPlanes = material2.clippingPlanes;
-      result.clipIntersection = material2.clipIntersection;
-      result.wireframeLinewidth = material2.wireframeLinewidth;
-      result.linewidth = material2.linewidth;
+      result.clipShadows = material3.clipShadows;
+      result.clippingPlanes = material3.clippingPlanes;
+      result.clipIntersection = material3.clipIntersection;
+      result.wireframeLinewidth = material3.wireframeLinewidth;
+      result.linewidth = material3.linewidth;
       if (light.isPointLight === true && result.isMeshDistanceMaterial === true) {
         result.referencePosition.setFromMatrixPosition(light.matrixWorld);
         result.nearDistance = shadowCameraNear;
@@ -14445,19 +14635,19 @@
         if ((object.castShadow || object.receiveShadow && type === VSMShadowMap) && (!object.frustumCulled || _frustum.intersectsObject(object))) {
           object.modelViewMatrix.multiplyMatrices(shadowCamera.matrixWorldInverse, object.matrixWorld);
           const geometry = _objects.update(object);
-          const material2 = object.material;
-          if (Array.isArray(material2)) {
+          const material3 = object.material;
+          if (Array.isArray(material3)) {
             const groups = geometry.groups;
             for (let k = 0, kl = groups.length; k < kl; k++) {
               const group = groups[k];
-              const groupMaterial = material2[group.materialIndex];
+              const groupMaterial = material3[group.materialIndex];
               if (groupMaterial && groupMaterial.visible) {
                 const depthMaterial = getDepthMaterial(object, geometry, groupMaterial, light, shadowCamera.near, shadowCamera.far, type);
                 _renderer.renderBufferDirect(shadowCamera, null, geometry, depthMaterial, object, group);
               }
             }
-          } else if (material2.visible) {
-            const depthMaterial = getDepthMaterial(object, geometry, material2, light, shadowCamera.near, shadowCamera.far, type);
+          } else if (material3.visible) {
+            const depthMaterial = getDepthMaterial(object, geometry, material3, light, shadowCamera.near, shadowCamera.far, type);
             _renderer.renderBufferDirect(shadowCamera, null, geometry, depthMaterial, object, null);
           }
         }
@@ -14852,25 +15042,25 @@
       currentBlending = blending;
       currentPremultipledAlpha = null;
     }
-    function setMaterial(material2, frontFaceCW) {
-      material2.side === DoubleSide ? disable(2884) : enable(2884);
-      let flipSided = material2.side === BackSide;
+    function setMaterial(material3, frontFaceCW) {
+      material3.side === DoubleSide ? disable(2884) : enable(2884);
+      let flipSided = material3.side === BackSide;
       if (frontFaceCW) flipSided = !flipSided;
       setFlipSided(flipSided);
-      material2.blending === NormalBlending && material2.transparent === false ? setBlending(NoBlending) : setBlending(material2.blending, material2.blendEquation, material2.blendSrc, material2.blendDst, material2.blendEquationAlpha, material2.blendSrcAlpha, material2.blendDstAlpha, material2.premultipliedAlpha);
-      depthBuffer.setFunc(material2.depthFunc);
-      depthBuffer.setTest(material2.depthTest);
-      depthBuffer.setMask(material2.depthWrite);
-      colorBuffer.setMask(material2.colorWrite);
-      const stencilWrite = material2.stencilWrite;
+      material3.blending === NormalBlending && material3.transparent === false ? setBlending(NoBlending) : setBlending(material3.blending, material3.blendEquation, material3.blendSrc, material3.blendDst, material3.blendEquationAlpha, material3.blendSrcAlpha, material3.blendDstAlpha, material3.premultipliedAlpha);
+      depthBuffer.setFunc(material3.depthFunc);
+      depthBuffer.setTest(material3.depthTest);
+      depthBuffer.setMask(material3.depthWrite);
+      colorBuffer.setMask(material3.colorWrite);
+      const stencilWrite = material3.stencilWrite;
       stencilBuffer.setTest(stencilWrite);
       if (stencilWrite) {
-        stencilBuffer.setMask(material2.stencilWriteMask);
-        stencilBuffer.setFunc(material2.stencilFunc, material2.stencilRef, material2.stencilFuncMask);
-        stencilBuffer.setOp(material2.stencilFail, material2.stencilZFail, material2.stencilZPass);
+        stencilBuffer.setMask(material3.stencilWriteMask);
+        stencilBuffer.setFunc(material3.stencilFunc, material3.stencilRef, material3.stencilFuncMask);
+        stencilBuffer.setOp(material3.stencilFail, material3.stencilZFail, material3.stencilZPass);
       }
-      setPolygonOffset(material2.polygonOffset, material2.polygonOffsetFactor, material2.polygonOffsetUnits);
-      material2.alphaToCoverage === true ? enable(32926) : disable(32926);
+      setPolygonOffset(material3.polygonOffset, material3.polygonOffsetFactor, material3.polygonOffsetUnits);
+      material3.alphaToCoverage === true ? enable(32926) : disable(32926);
     }
     function setFlipSided(flipSided) {
       if (currentFlipSided !== flipSided) {
@@ -16287,114 +16477,114 @@
         uniforms.fogDensity.value = fog.density;
       }
     }
-    function refreshMaterialUniforms(uniforms, material2, pixelRatio, height) {
-      if (material2.isMeshBasicMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-      } else if (material2.isMeshLambertMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-        refreshUniformsLambert(uniforms, material2);
-      } else if (material2.isMeshToonMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-        refreshUniformsToon(uniforms, material2);
-      } else if (material2.isMeshPhongMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-        refreshUniformsPhong(uniforms, material2);
-      } else if (material2.isMeshStandardMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-        if (material2.isMeshPhysicalMaterial) {
-          refreshUniformsPhysical(uniforms, material2);
+    function refreshMaterialUniforms(uniforms, material3, pixelRatio, height) {
+      if (material3.isMeshBasicMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+      } else if (material3.isMeshLambertMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+        refreshUniformsLambert(uniforms, material3);
+      } else if (material3.isMeshToonMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+        refreshUniformsToon(uniforms, material3);
+      } else if (material3.isMeshPhongMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+        refreshUniformsPhong(uniforms, material3);
+      } else if (material3.isMeshStandardMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+        if (material3.isMeshPhysicalMaterial) {
+          refreshUniformsPhysical(uniforms, material3);
         } else {
-          refreshUniformsStandard(uniforms, material2);
+          refreshUniformsStandard(uniforms, material3);
         }
-      } else if (material2.isMeshMatcapMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-        refreshUniformsMatcap(uniforms, material2);
-      } else if (material2.isMeshDepthMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-        refreshUniformsDepth(uniforms, material2);
-      } else if (material2.isMeshDistanceMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-        refreshUniformsDistance(uniforms, material2);
-      } else if (material2.isMeshNormalMaterial) {
-        refreshUniformsCommon(uniforms, material2);
-        refreshUniformsNormal(uniforms, material2);
-      } else if (material2.isLineBasicMaterial) {
-        refreshUniformsLine(uniforms, material2);
-        if (material2.isLineDashedMaterial) {
-          refreshUniformsDash(uniforms, material2);
+      } else if (material3.isMeshMatcapMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+        refreshUniformsMatcap(uniforms, material3);
+      } else if (material3.isMeshDepthMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+        refreshUniformsDepth(uniforms, material3);
+      } else if (material3.isMeshDistanceMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+        refreshUniformsDistance(uniforms, material3);
+      } else if (material3.isMeshNormalMaterial) {
+        refreshUniformsCommon(uniforms, material3);
+        refreshUniformsNormal(uniforms, material3);
+      } else if (material3.isLineBasicMaterial) {
+        refreshUniformsLine(uniforms, material3);
+        if (material3.isLineDashedMaterial) {
+          refreshUniformsDash(uniforms, material3);
         }
-      } else if (material2.isPointsMaterial) {
-        refreshUniformsPoints(uniforms, material2, pixelRatio, height);
-      } else if (material2.isSpriteMaterial) {
-        refreshUniformsSprites(uniforms, material2);
-      } else if (material2.isShadowMaterial) {
-        uniforms.color.value.copy(material2.color);
-        uniforms.opacity.value = material2.opacity;
-      } else if (material2.isShaderMaterial) {
-        material2.uniformsNeedUpdate = false;
+      } else if (material3.isPointsMaterial) {
+        refreshUniformsPoints(uniforms, material3, pixelRatio, height);
+      } else if (material3.isSpriteMaterial) {
+        refreshUniformsSprites(uniforms, material3);
+      } else if (material3.isShadowMaterial) {
+        uniforms.color.value.copy(material3.color);
+        uniforms.opacity.value = material3.opacity;
+      } else if (material3.isShaderMaterial) {
+        material3.uniformsNeedUpdate = false;
       }
     }
-    function refreshUniformsCommon(uniforms, material2) {
-      uniforms.opacity.value = material2.opacity;
-      if (material2.color) {
-        uniforms.diffuse.value.copy(material2.color);
+    function refreshUniformsCommon(uniforms, material3) {
+      uniforms.opacity.value = material3.opacity;
+      if (material3.color) {
+        uniforms.diffuse.value.copy(material3.color);
       }
-      if (material2.emissive) {
-        uniforms.emissive.value.copy(material2.emissive).multiplyScalar(material2.emissiveIntensity);
+      if (material3.emissive) {
+        uniforms.emissive.value.copy(material3.emissive).multiplyScalar(material3.emissiveIntensity);
       }
-      if (material2.map) {
-        uniforms.map.value = material2.map;
+      if (material3.map) {
+        uniforms.map.value = material3.map;
       }
-      if (material2.alphaMap) {
-        uniforms.alphaMap.value = material2.alphaMap;
+      if (material3.alphaMap) {
+        uniforms.alphaMap.value = material3.alphaMap;
       }
-      if (material2.specularMap) {
-        uniforms.specularMap.value = material2.specularMap;
+      if (material3.specularMap) {
+        uniforms.specularMap.value = material3.specularMap;
       }
-      const envMap = properties.get(material2).envMap;
+      const envMap = properties.get(material3).envMap;
       if (envMap) {
         uniforms.envMap.value = envMap;
         uniforms.flipEnvMap.value = envMap.isCubeTexture && envMap._needsFlipEnvMap ? -1 : 1;
-        uniforms.reflectivity.value = material2.reflectivity;
-        uniforms.refractionRatio.value = material2.refractionRatio;
+        uniforms.reflectivity.value = material3.reflectivity;
+        uniforms.refractionRatio.value = material3.refractionRatio;
         const maxMipLevel = properties.get(envMap).__maxMipLevel;
         if (maxMipLevel !== void 0) {
           uniforms.maxMipLevel.value = maxMipLevel;
         }
       }
-      if (material2.lightMap) {
-        uniforms.lightMap.value = material2.lightMap;
-        uniforms.lightMapIntensity.value = material2.lightMapIntensity;
+      if (material3.lightMap) {
+        uniforms.lightMap.value = material3.lightMap;
+        uniforms.lightMapIntensity.value = material3.lightMapIntensity;
       }
-      if (material2.aoMap) {
-        uniforms.aoMap.value = material2.aoMap;
-        uniforms.aoMapIntensity.value = material2.aoMapIntensity;
+      if (material3.aoMap) {
+        uniforms.aoMap.value = material3.aoMap;
+        uniforms.aoMapIntensity.value = material3.aoMapIntensity;
       }
       let uvScaleMap;
-      if (material2.map) {
-        uvScaleMap = material2.map;
-      } else if (material2.specularMap) {
-        uvScaleMap = material2.specularMap;
-      } else if (material2.displacementMap) {
-        uvScaleMap = material2.displacementMap;
-      } else if (material2.normalMap) {
-        uvScaleMap = material2.normalMap;
-      } else if (material2.bumpMap) {
-        uvScaleMap = material2.bumpMap;
-      } else if (material2.roughnessMap) {
-        uvScaleMap = material2.roughnessMap;
-      } else if (material2.metalnessMap) {
-        uvScaleMap = material2.metalnessMap;
-      } else if (material2.alphaMap) {
-        uvScaleMap = material2.alphaMap;
-      } else if (material2.emissiveMap) {
-        uvScaleMap = material2.emissiveMap;
-      } else if (material2.clearcoatMap) {
-        uvScaleMap = material2.clearcoatMap;
-      } else if (material2.clearcoatNormalMap) {
-        uvScaleMap = material2.clearcoatNormalMap;
-      } else if (material2.clearcoatRoughnessMap) {
-        uvScaleMap = material2.clearcoatRoughnessMap;
+      if (material3.map) {
+        uvScaleMap = material3.map;
+      } else if (material3.specularMap) {
+        uvScaleMap = material3.specularMap;
+      } else if (material3.displacementMap) {
+        uvScaleMap = material3.displacementMap;
+      } else if (material3.normalMap) {
+        uvScaleMap = material3.normalMap;
+      } else if (material3.bumpMap) {
+        uvScaleMap = material3.bumpMap;
+      } else if (material3.roughnessMap) {
+        uvScaleMap = material3.roughnessMap;
+      } else if (material3.metalnessMap) {
+        uvScaleMap = material3.metalnessMap;
+      } else if (material3.alphaMap) {
+        uvScaleMap = material3.alphaMap;
+      } else if (material3.emissiveMap) {
+        uvScaleMap = material3.emissiveMap;
+      } else if (material3.clearcoatMap) {
+        uvScaleMap = material3.clearcoatMap;
+      } else if (material3.clearcoatNormalMap) {
+        uvScaleMap = material3.clearcoatNormalMap;
+      } else if (material3.clearcoatRoughnessMap) {
+        uvScaleMap = material3.clearcoatRoughnessMap;
       }
       if (uvScaleMap !== void 0) {
         if (uvScaleMap.isWebGLRenderTarget) {
@@ -16406,10 +16596,10 @@
         uniforms.uvTransform.value.copy(uvScaleMap.matrix);
       }
       let uv2ScaleMap;
-      if (material2.aoMap) {
-        uv2ScaleMap = material2.aoMap;
-      } else if (material2.lightMap) {
-        uv2ScaleMap = material2.lightMap;
+      if (material3.aoMap) {
+        uv2ScaleMap = material3.aoMap;
+      } else if (material3.lightMap) {
+        uv2ScaleMap = material3.lightMap;
       }
       if (uv2ScaleMap !== void 0) {
         if (uv2ScaleMap.isWebGLRenderTarget) {
@@ -16421,31 +16611,31 @@
         uniforms.uv2Transform.value.copy(uv2ScaleMap.matrix);
       }
     }
-    function refreshUniformsLine(uniforms, material2) {
-      uniforms.diffuse.value.copy(material2.color);
-      uniforms.opacity.value = material2.opacity;
+    function refreshUniformsLine(uniforms, material3) {
+      uniforms.diffuse.value.copy(material3.color);
+      uniforms.opacity.value = material3.opacity;
     }
-    function refreshUniformsDash(uniforms, material2) {
-      uniforms.dashSize.value = material2.dashSize;
-      uniforms.totalSize.value = material2.dashSize + material2.gapSize;
-      uniforms.scale.value = material2.scale;
+    function refreshUniformsDash(uniforms, material3) {
+      uniforms.dashSize.value = material3.dashSize;
+      uniforms.totalSize.value = material3.dashSize + material3.gapSize;
+      uniforms.scale.value = material3.scale;
     }
-    function refreshUniformsPoints(uniforms, material2, pixelRatio, height) {
-      uniforms.diffuse.value.copy(material2.color);
-      uniforms.opacity.value = material2.opacity;
-      uniforms.size.value = material2.size * pixelRatio;
+    function refreshUniformsPoints(uniforms, material3, pixelRatio, height) {
+      uniforms.diffuse.value.copy(material3.color);
+      uniforms.opacity.value = material3.opacity;
+      uniforms.size.value = material3.size * pixelRatio;
       uniforms.scale.value = height * 0.5;
-      if (material2.map) {
-        uniforms.map.value = material2.map;
+      if (material3.map) {
+        uniforms.map.value = material3.map;
       }
-      if (material2.alphaMap) {
-        uniforms.alphaMap.value = material2.alphaMap;
+      if (material3.alphaMap) {
+        uniforms.alphaMap.value = material3.alphaMap;
       }
       let uvScaleMap;
-      if (material2.map) {
-        uvScaleMap = material2.map;
-      } else if (material2.alphaMap) {
-        uvScaleMap = material2.alphaMap;
+      if (material3.map) {
+        uvScaleMap = material3.map;
+      } else if (material3.alphaMap) {
+        uvScaleMap = material3.alphaMap;
       }
       if (uvScaleMap !== void 0) {
         if (uvScaleMap.matrixAutoUpdate === true) {
@@ -16454,21 +16644,21 @@
         uniforms.uvTransform.value.copy(uvScaleMap.matrix);
       }
     }
-    function refreshUniformsSprites(uniforms, material2) {
-      uniforms.diffuse.value.copy(material2.color);
-      uniforms.opacity.value = material2.opacity;
-      uniforms.rotation.value = material2.rotation;
-      if (material2.map) {
-        uniforms.map.value = material2.map;
+    function refreshUniformsSprites(uniforms, material3) {
+      uniforms.diffuse.value.copy(material3.color);
+      uniforms.opacity.value = material3.opacity;
+      uniforms.rotation.value = material3.rotation;
+      if (material3.map) {
+        uniforms.map.value = material3.map;
       }
-      if (material2.alphaMap) {
-        uniforms.alphaMap.value = material2.alphaMap;
+      if (material3.alphaMap) {
+        uniforms.alphaMap.value = material3.alphaMap;
       }
       let uvScaleMap;
-      if (material2.map) {
-        uvScaleMap = material2.map;
-      } else if (material2.alphaMap) {
-        uvScaleMap = material2.alphaMap;
+      if (material3.map) {
+        uvScaleMap = material3.map;
+      } else if (material3.alphaMap) {
+        uvScaleMap = material3.alphaMap;
       }
       if (uvScaleMap !== void 0) {
         if (uvScaleMap.matrixAutoUpdate === true) {
@@ -16477,164 +16667,164 @@
         uniforms.uvTransform.value.copy(uvScaleMap.matrix);
       }
     }
-    function refreshUniformsLambert(uniforms, material2) {
-      if (material2.emissiveMap) {
-        uniforms.emissiveMap.value = material2.emissiveMap;
+    function refreshUniformsLambert(uniforms, material3) {
+      if (material3.emissiveMap) {
+        uniforms.emissiveMap.value = material3.emissiveMap;
       }
     }
-    function refreshUniformsPhong(uniforms, material2) {
-      uniforms.specular.value.copy(material2.specular);
-      uniforms.shininess.value = Math.max(material2.shininess, 1e-4);
-      if (material2.emissiveMap) {
-        uniforms.emissiveMap.value = material2.emissiveMap;
+    function refreshUniformsPhong(uniforms, material3) {
+      uniforms.specular.value.copy(material3.specular);
+      uniforms.shininess.value = Math.max(material3.shininess, 1e-4);
+      if (material3.emissiveMap) {
+        uniforms.emissiveMap.value = material3.emissiveMap;
       }
-      if (material2.bumpMap) {
-        uniforms.bumpMap.value = material2.bumpMap;
-        uniforms.bumpScale.value = material2.bumpScale;
-        if (material2.side === BackSide) uniforms.bumpScale.value *= -1;
+      if (material3.bumpMap) {
+        uniforms.bumpMap.value = material3.bumpMap;
+        uniforms.bumpScale.value = material3.bumpScale;
+        if (material3.side === BackSide) uniforms.bumpScale.value *= -1;
       }
-      if (material2.normalMap) {
-        uniforms.normalMap.value = material2.normalMap;
-        uniforms.normalScale.value.copy(material2.normalScale);
-        if (material2.side === BackSide) uniforms.normalScale.value.negate();
+      if (material3.normalMap) {
+        uniforms.normalMap.value = material3.normalMap;
+        uniforms.normalScale.value.copy(material3.normalScale);
+        if (material3.side === BackSide) uniforms.normalScale.value.negate();
       }
-      if (material2.displacementMap) {
-        uniforms.displacementMap.value = material2.displacementMap;
-        uniforms.displacementScale.value = material2.displacementScale;
-        uniforms.displacementBias.value = material2.displacementBias;
-      }
-    }
-    function refreshUniformsToon(uniforms, material2) {
-      if (material2.gradientMap) {
-        uniforms.gradientMap.value = material2.gradientMap;
-      }
-      if (material2.emissiveMap) {
-        uniforms.emissiveMap.value = material2.emissiveMap;
-      }
-      if (material2.bumpMap) {
-        uniforms.bumpMap.value = material2.bumpMap;
-        uniforms.bumpScale.value = material2.bumpScale;
-        if (material2.side === BackSide) uniforms.bumpScale.value *= -1;
-      }
-      if (material2.normalMap) {
-        uniforms.normalMap.value = material2.normalMap;
-        uniforms.normalScale.value.copy(material2.normalScale);
-        if (material2.side === BackSide) uniforms.normalScale.value.negate();
-      }
-      if (material2.displacementMap) {
-        uniforms.displacementMap.value = material2.displacementMap;
-        uniforms.displacementScale.value = material2.displacementScale;
-        uniforms.displacementBias.value = material2.displacementBias;
+      if (material3.displacementMap) {
+        uniforms.displacementMap.value = material3.displacementMap;
+        uniforms.displacementScale.value = material3.displacementScale;
+        uniforms.displacementBias.value = material3.displacementBias;
       }
     }
-    function refreshUniformsStandard(uniforms, material2) {
-      uniforms.roughness.value = material2.roughness;
-      uniforms.metalness.value = material2.metalness;
-      if (material2.roughnessMap) {
-        uniforms.roughnessMap.value = material2.roughnessMap;
+    function refreshUniformsToon(uniforms, material3) {
+      if (material3.gradientMap) {
+        uniforms.gradientMap.value = material3.gradientMap;
       }
-      if (material2.metalnessMap) {
-        uniforms.metalnessMap.value = material2.metalnessMap;
+      if (material3.emissiveMap) {
+        uniforms.emissiveMap.value = material3.emissiveMap;
       }
-      if (material2.emissiveMap) {
-        uniforms.emissiveMap.value = material2.emissiveMap;
+      if (material3.bumpMap) {
+        uniforms.bumpMap.value = material3.bumpMap;
+        uniforms.bumpScale.value = material3.bumpScale;
+        if (material3.side === BackSide) uniforms.bumpScale.value *= -1;
       }
-      if (material2.bumpMap) {
-        uniforms.bumpMap.value = material2.bumpMap;
-        uniforms.bumpScale.value = material2.bumpScale;
-        if (material2.side === BackSide) uniforms.bumpScale.value *= -1;
+      if (material3.normalMap) {
+        uniforms.normalMap.value = material3.normalMap;
+        uniforms.normalScale.value.copy(material3.normalScale);
+        if (material3.side === BackSide) uniforms.normalScale.value.negate();
       }
-      if (material2.normalMap) {
-        uniforms.normalMap.value = material2.normalMap;
-        uniforms.normalScale.value.copy(material2.normalScale);
-        if (material2.side === BackSide) uniforms.normalScale.value.negate();
+      if (material3.displacementMap) {
+        uniforms.displacementMap.value = material3.displacementMap;
+        uniforms.displacementScale.value = material3.displacementScale;
+        uniforms.displacementBias.value = material3.displacementBias;
       }
-      if (material2.displacementMap) {
-        uniforms.displacementMap.value = material2.displacementMap;
-        uniforms.displacementScale.value = material2.displacementScale;
-        uniforms.displacementBias.value = material2.displacementBias;
+    }
+    function refreshUniformsStandard(uniforms, material3) {
+      uniforms.roughness.value = material3.roughness;
+      uniforms.metalness.value = material3.metalness;
+      if (material3.roughnessMap) {
+        uniforms.roughnessMap.value = material3.roughnessMap;
       }
-      const envMap = properties.get(material2).envMap;
+      if (material3.metalnessMap) {
+        uniforms.metalnessMap.value = material3.metalnessMap;
+      }
+      if (material3.emissiveMap) {
+        uniforms.emissiveMap.value = material3.emissiveMap;
+      }
+      if (material3.bumpMap) {
+        uniforms.bumpMap.value = material3.bumpMap;
+        uniforms.bumpScale.value = material3.bumpScale;
+        if (material3.side === BackSide) uniforms.bumpScale.value *= -1;
+      }
+      if (material3.normalMap) {
+        uniforms.normalMap.value = material3.normalMap;
+        uniforms.normalScale.value.copy(material3.normalScale);
+        if (material3.side === BackSide) uniforms.normalScale.value.negate();
+      }
+      if (material3.displacementMap) {
+        uniforms.displacementMap.value = material3.displacementMap;
+        uniforms.displacementScale.value = material3.displacementScale;
+        uniforms.displacementBias.value = material3.displacementBias;
+      }
+      const envMap = properties.get(material3).envMap;
       if (envMap) {
-        uniforms.envMapIntensity.value = material2.envMapIntensity;
+        uniforms.envMapIntensity.value = material3.envMapIntensity;
       }
     }
-    function refreshUniformsPhysical(uniforms, material2) {
-      refreshUniformsStandard(uniforms, material2);
-      uniforms.reflectivity.value = material2.reflectivity;
-      uniforms.clearcoat.value = material2.clearcoat;
-      uniforms.clearcoatRoughness.value = material2.clearcoatRoughness;
-      if (material2.sheen) uniforms.sheen.value.copy(material2.sheen);
-      if (material2.clearcoatMap) {
-        uniforms.clearcoatMap.value = material2.clearcoatMap;
+    function refreshUniformsPhysical(uniforms, material3) {
+      refreshUniformsStandard(uniforms, material3);
+      uniforms.reflectivity.value = material3.reflectivity;
+      uniforms.clearcoat.value = material3.clearcoat;
+      uniforms.clearcoatRoughness.value = material3.clearcoatRoughness;
+      if (material3.sheen) uniforms.sheen.value.copy(material3.sheen);
+      if (material3.clearcoatMap) {
+        uniforms.clearcoatMap.value = material3.clearcoatMap;
       }
-      if (material2.clearcoatRoughnessMap) {
-        uniforms.clearcoatRoughnessMap.value = material2.clearcoatRoughnessMap;
+      if (material3.clearcoatRoughnessMap) {
+        uniforms.clearcoatRoughnessMap.value = material3.clearcoatRoughnessMap;
       }
-      if (material2.clearcoatNormalMap) {
-        uniforms.clearcoatNormalScale.value.copy(material2.clearcoatNormalScale);
-        uniforms.clearcoatNormalMap.value = material2.clearcoatNormalMap;
-        if (material2.side === BackSide) {
+      if (material3.clearcoatNormalMap) {
+        uniforms.clearcoatNormalScale.value.copy(material3.clearcoatNormalScale);
+        uniforms.clearcoatNormalMap.value = material3.clearcoatNormalMap;
+        if (material3.side === BackSide) {
           uniforms.clearcoatNormalScale.value.negate();
         }
       }
-      uniforms.transmission.value = material2.transmission;
-      if (material2.transmissionMap) {
-        uniforms.transmissionMap.value = material2.transmissionMap;
+      uniforms.transmission.value = material3.transmission;
+      if (material3.transmissionMap) {
+        uniforms.transmissionMap.value = material3.transmissionMap;
       }
     }
-    function refreshUniformsMatcap(uniforms, material2) {
-      if (material2.matcap) {
-        uniforms.matcap.value = material2.matcap;
+    function refreshUniformsMatcap(uniforms, material3) {
+      if (material3.matcap) {
+        uniforms.matcap.value = material3.matcap;
       }
-      if (material2.bumpMap) {
-        uniforms.bumpMap.value = material2.bumpMap;
-        uniforms.bumpScale.value = material2.bumpScale;
-        if (material2.side === BackSide) uniforms.bumpScale.value *= -1;
+      if (material3.bumpMap) {
+        uniforms.bumpMap.value = material3.bumpMap;
+        uniforms.bumpScale.value = material3.bumpScale;
+        if (material3.side === BackSide) uniforms.bumpScale.value *= -1;
       }
-      if (material2.normalMap) {
-        uniforms.normalMap.value = material2.normalMap;
-        uniforms.normalScale.value.copy(material2.normalScale);
-        if (material2.side === BackSide) uniforms.normalScale.value.negate();
+      if (material3.normalMap) {
+        uniforms.normalMap.value = material3.normalMap;
+        uniforms.normalScale.value.copy(material3.normalScale);
+        if (material3.side === BackSide) uniforms.normalScale.value.negate();
       }
-      if (material2.displacementMap) {
-        uniforms.displacementMap.value = material2.displacementMap;
-        uniforms.displacementScale.value = material2.displacementScale;
-        uniforms.displacementBias.value = material2.displacementBias;
-      }
-    }
-    function refreshUniformsDepth(uniforms, material2) {
-      if (material2.displacementMap) {
-        uniforms.displacementMap.value = material2.displacementMap;
-        uniforms.displacementScale.value = material2.displacementScale;
-        uniforms.displacementBias.value = material2.displacementBias;
+      if (material3.displacementMap) {
+        uniforms.displacementMap.value = material3.displacementMap;
+        uniforms.displacementScale.value = material3.displacementScale;
+        uniforms.displacementBias.value = material3.displacementBias;
       }
     }
-    function refreshUniformsDistance(uniforms, material2) {
-      if (material2.displacementMap) {
-        uniforms.displacementMap.value = material2.displacementMap;
-        uniforms.displacementScale.value = material2.displacementScale;
-        uniforms.displacementBias.value = material2.displacementBias;
+    function refreshUniformsDepth(uniforms, material3) {
+      if (material3.displacementMap) {
+        uniforms.displacementMap.value = material3.displacementMap;
+        uniforms.displacementScale.value = material3.displacementScale;
+        uniforms.displacementBias.value = material3.displacementBias;
       }
-      uniforms.referencePosition.value.copy(material2.referencePosition);
-      uniforms.nearDistance.value = material2.nearDistance;
-      uniforms.farDistance.value = material2.farDistance;
     }
-    function refreshUniformsNormal(uniforms, material2) {
-      if (material2.bumpMap) {
-        uniforms.bumpMap.value = material2.bumpMap;
-        uniforms.bumpScale.value = material2.bumpScale;
-        if (material2.side === BackSide) uniforms.bumpScale.value *= -1;
+    function refreshUniformsDistance(uniforms, material3) {
+      if (material3.displacementMap) {
+        uniforms.displacementMap.value = material3.displacementMap;
+        uniforms.displacementScale.value = material3.displacementScale;
+        uniforms.displacementBias.value = material3.displacementBias;
       }
-      if (material2.normalMap) {
-        uniforms.normalMap.value = material2.normalMap;
-        uniforms.normalScale.value.copy(material2.normalScale);
-        if (material2.side === BackSide) uniforms.normalScale.value.negate();
+      uniforms.referencePosition.value.copy(material3.referencePosition);
+      uniforms.nearDistance.value = material3.nearDistance;
+      uniforms.farDistance.value = material3.farDistance;
+    }
+    function refreshUniformsNormal(uniforms, material3) {
+      if (material3.bumpMap) {
+        uniforms.bumpMap.value = material3.bumpMap;
+        uniforms.bumpScale.value = material3.bumpScale;
+        if (material3.side === BackSide) uniforms.bumpScale.value *= -1;
       }
-      if (material2.displacementMap) {
-        uniforms.displacementMap.value = material2.displacementMap;
-        uniforms.displacementScale.value = material2.displacementScale;
-        uniforms.displacementBias.value = material2.displacementBias;
+      if (material3.normalMap) {
+        uniforms.normalMap.value = material3.normalMap;
+        uniforms.normalScale.value.copy(material3.normalScale);
+        if (material3.side === BackSide) uniforms.normalScale.value.negate();
+      }
+      if (material3.displacementMap) {
+        uniforms.displacementMap.value = material3.displacementMap;
+        uniforms.displacementScale.value = material3.displacementScale;
+        uniforms.displacementBias.value = material3.displacementBias;
       }
     }
     return {
@@ -16747,7 +16937,7 @@
       throw error;
     }
     let extensions, capabilities, state, info;
-    let properties, textures, cubemaps, attributes, geometries, objects;
+    let properties, textures2, cubemaps, attributes, geometries, objects;
     let programCache, materials, renderLists, renderStates, clipping, shadowMap;
     let background, morphtargets, bufferRenderer, indexedBufferRenderer;
     let utils, bindingStates;
@@ -16759,7 +16949,7 @@
       state = new WebGLState(_gl, extensions, capabilities);
       info = new WebGLInfo(_gl);
       properties = new WebGLProperties();
-      textures = new WebGLTextures(_gl, extensions, state, properties, capabilities, utils, info);
+      textures2 = new WebGLTextures(_gl, extensions, state, properties, capabilities, utils, info);
       cubemaps = new WebGLCubeMaps(_this);
       attributes = new WebGLAttributes(_gl, capabilities);
       bindingStates = new WebGLBindingStates(_gl, extensions, attributes, capabilities);
@@ -16954,16 +17144,16 @@
       shadowMap.type = shadowMapType;
     }
     function onMaterialDispose(event) {
-      const material2 = event.target;
-      material2.removeEventListener("dispose", onMaterialDispose);
-      deallocateMaterial(material2);
+      const material3 = event.target;
+      material3.removeEventListener("dispose", onMaterialDispose);
+      deallocateMaterial(material3);
     }
-    function deallocateMaterial(material2) {
-      releaseMaterialProgramReferences(material2);
-      properties.remove(material2);
+    function deallocateMaterial(material3) {
+      releaseMaterialProgramReferences(material3);
+      properties.remove(material3);
     }
-    function releaseMaterialProgramReferences(material2) {
-      const programs = properties.get(material2).programs;
+    function releaseMaterialProgramReferences(material3) {
+      const programs = properties.get(material3).programs;
       if (programs !== void 0) {
         programs.forEach(function(program) {
           programCache.releaseProgram(program);
@@ -17011,11 +17201,11 @@
       _gl.drawArrays(4, 0, object.count);
       object.count = 0;
     };
-    this.renderBufferDirect = function(camera, scene, geometry, material2, object, group) {
+    this.renderBufferDirect = function(camera, scene, geometry, material3, object, group) {
       if (scene === null) scene = _emptyScene;
       const frontFaceCW = object.isMesh && object.matrixWorld.determinant() < 0;
-      const program = setProgram(camera, scene, material2, object);
-      state.setMaterial(material2, frontFaceCW);
+      const program = setProgram(camera, scene, material3, object);
+      state.setMaterial(material3, frontFaceCW);
       let index = geometry.index;
       const position = geometry.attributes.position;
       if (index === null) {
@@ -17024,14 +17214,14 @@
         return;
       }
       let rangeFactor = 1;
-      if (material2.wireframe === true) {
+      if (material3.wireframe === true) {
         index = geometries.getWireframeAttribute(geometry);
         rangeFactor = 2;
       }
-      if (material2.morphTargets || material2.morphNormals) {
-        morphtargets.update(object, geometry, material2, program);
+      if (material3.morphTargets || material3.morphNormals) {
+        morphtargets.update(object, geometry, material3, program);
       }
-      bindingStates.setup(object, material2, program, geometry, index);
+      bindingStates.setup(object, material3, program, geometry, index);
       let attribute;
       let renderer = bufferRenderer;
       if (index !== null) {
@@ -17049,14 +17239,14 @@
       const drawCount = Math.max(0, drawEnd - drawStart + 1);
       if (drawCount === 0) return;
       if (object.isMesh) {
-        if (material2.wireframe === true) {
-          state.setLineWidth(material2.wireframeLinewidth * getTargetPixelRatio());
+        if (material3.wireframe === true) {
+          state.setLineWidth(material3.wireframeLinewidth * getTargetPixelRatio());
           renderer.setMode(1);
         } else {
           renderer.setMode(4);
         }
       } else if (object.isLine) {
-        let lineWidth = material2.linewidth;
+        let lineWidth = material3.linewidth;
         if (lineWidth === void 0) lineWidth = 1;
         state.setLineWidth(lineWidth * getTargetPixelRatio());
         if (object.isLineSegments) {
@@ -17093,15 +17283,15 @@
       });
       currentRenderState.setupLights();
       scene.traverse(function(object) {
-        const material2 = object.material;
-        if (material2) {
-          if (Array.isArray(material2)) {
-            for (let i = 0; i < material2.length; i++) {
-              const material22 = material2[i];
+        const material3 = object.material;
+        if (material3) {
+          if (Array.isArray(material3)) {
+            for (let i = 0; i < material3.length; i++) {
+              const material22 = material3[i];
               getProgram(material22, scene, object);
             }
           } else {
-            getProgram(material2, scene, object);
+            getProgram(material3, scene, object);
           }
         }
       });
@@ -17178,8 +17368,8 @@
       if (opaqueObjects.length > 0) renderObjects(opaqueObjects, scene, camera);
       if (transparentObjects.length > 0) renderObjects(transparentObjects, scene, camera);
       if (_currentRenderTarget !== null) {
-        textures.updateRenderTargetMipmap(_currentRenderTarget);
-        textures.updateMultisampleRenderTarget(_currentRenderTarget);
+        textures2.updateRenderTargetMipmap(_currentRenderTarget);
+        textures2.updateMultisampleRenderTarget(_currentRenderTarget);
       }
       if (scene.isScene === true) scene.onAfterRender(_this, scene, camera);
       state.buffers.depth.setTest(true);
@@ -17221,9 +17411,9 @@
               _vector3.setFromMatrixPosition(object.matrixWorld).applyMatrix4(_projScreenMatrix2);
             }
             const geometry = objects.update(object);
-            const material2 = object.material;
-            if (material2.visible) {
-              currentRenderList.push(object, geometry, material2, groupOrder, _vector3.z, null);
+            const material3 = object.material;
+            if (material3.visible) {
+              currentRenderList.push(object, geometry, material3, groupOrder, _vector3.z, null);
             }
           }
         } else if (object.isImmediateRenderObject) {
@@ -17243,18 +17433,18 @@
               _vector3.setFromMatrixPosition(object.matrixWorld).applyMatrix4(_projScreenMatrix2);
             }
             const geometry = objects.update(object);
-            const material2 = object.material;
-            if (Array.isArray(material2)) {
+            const material3 = object.material;
+            if (Array.isArray(material3)) {
               const groups = geometry.groups;
               for (let i = 0, l = groups.length; i < l; i++) {
                 const group = groups[i];
-                const groupMaterial = material2[group.materialIndex];
+                const groupMaterial = material3[group.materialIndex];
                 if (groupMaterial && groupMaterial.visible) {
                   currentRenderList.push(object, geometry, groupMaterial, groupOrder, _vector3.z, group);
                 }
               }
-            } else if (material2.visible) {
-              currentRenderList.push(object, geometry, material2, groupOrder, _vector3.z, null);
+            } else if (material3.visible) {
+              currentRenderList.push(object, geometry, material3, groupOrder, _vector3.z, null);
             }
           }
         }
@@ -17270,7 +17460,7 @@
         const renderItem = renderList[i];
         const object = renderItem.object;
         const geometry = renderItem.geometry;
-        const material2 = overrideMaterial === null ? renderItem.material : overrideMaterial;
+        const material3 = overrideMaterial === null ? renderItem.material : overrideMaterial;
         const group = renderItem.group;
         if (camera.isArrayCamera) {
           const cameras = camera.cameras;
@@ -17279,65 +17469,65 @@
             if (object.layers.test(camera2.layers)) {
               state.viewport(_currentViewport.copy(camera2.viewport));
               currentRenderState.setupLightsView(camera2);
-              renderObject(object, scene, camera2, geometry, material2, group);
+              renderObject(object, scene, camera2, geometry, material3, group);
             }
           }
         } else {
-          renderObject(object, scene, camera, geometry, material2, group);
+          renderObject(object, scene, camera, geometry, material3, group);
         }
       }
     }
-    function renderObject(object, scene, camera, geometry, material2, group) {
-      object.onBeforeRender(_this, scene, camera, geometry, material2, group);
+    function renderObject(object, scene, camera, geometry, material3, group) {
+      object.onBeforeRender(_this, scene, camera, geometry, material3, group);
       object.modelViewMatrix.multiplyMatrices(camera.matrixWorldInverse, object.matrixWorld);
       object.normalMatrix.getNormalMatrix(object.modelViewMatrix);
       if (object.isImmediateRenderObject) {
-        const program = setProgram(camera, scene, material2, object);
-        state.setMaterial(material2);
+        const program = setProgram(camera, scene, material3, object);
+        state.setMaterial(material3);
         bindingStates.reset();
         renderObjectImmediate(object, program);
       } else {
-        _this.renderBufferDirect(camera, scene, geometry, material2, object, group);
+        _this.renderBufferDirect(camera, scene, geometry, material3, object, group);
       }
-      object.onAfterRender(_this, scene, camera, geometry, material2, group);
+      object.onAfterRender(_this, scene, camera, geometry, material3, group);
     }
-    function getProgram(material2, scene, object) {
+    function getProgram(material3, scene, object) {
       if (scene.isScene !== true) scene = _emptyScene;
-      const materialProperties = properties.get(material2);
+      const materialProperties = properties.get(material3);
       const lights = currentRenderState.state.lights;
       const shadowsArray = currentRenderState.state.shadowsArray;
       const lightsStateVersion = lights.state.version;
-      const parameters2 = programCache.getParameters(material2, lights.state, shadowsArray, scene, object);
+      const parameters2 = programCache.getParameters(material3, lights.state, shadowsArray, scene, object);
       const programCacheKey = programCache.getProgramCacheKey(parameters2);
       let programs = materialProperties.programs;
-      materialProperties.environment = material2.isMeshStandardMaterial ? scene.environment : null;
+      materialProperties.environment = material3.isMeshStandardMaterial ? scene.environment : null;
       materialProperties.fog = scene.fog;
-      materialProperties.envMap = cubemaps.get(material2.envMap || materialProperties.environment);
+      materialProperties.envMap = cubemaps.get(material3.envMap || materialProperties.environment);
       if (programs === void 0) {
-        material2.addEventListener("dispose", onMaterialDispose);
+        material3.addEventListener("dispose", onMaterialDispose);
         programs = /* @__PURE__ */ new Map();
         materialProperties.programs = programs;
       }
       let program = programs.get(programCacheKey);
       if (program !== void 0) {
         if (materialProperties.currentProgram === program && materialProperties.lightsStateVersion === lightsStateVersion) {
-          updateCommonMaterialProperties(material2, parameters2);
+          updateCommonMaterialProperties(material3, parameters2);
           return program;
         }
       } else {
-        parameters2.uniforms = programCache.getUniforms(material2);
-        material2.onBuild(parameters2, _this);
-        material2.onBeforeCompile(parameters2, _this);
+        parameters2.uniforms = programCache.getUniforms(material3);
+        material3.onBuild(parameters2, _this);
+        material3.onBeforeCompile(parameters2, _this);
         program = programCache.acquireProgram(parameters2, programCacheKey);
         programs.set(programCacheKey, program);
         materialProperties.uniforms = parameters2.uniforms;
       }
       const uniforms = materialProperties.uniforms;
-      if (!material2.isShaderMaterial && !material2.isRawShaderMaterial || material2.clipping === true) {
+      if (!material3.isShaderMaterial && !material3.isRawShaderMaterial || material3.clipping === true) {
         uniforms.clippingPlanes = clipping.uniform;
       }
-      updateCommonMaterialProperties(material2, parameters2);
-      materialProperties.needsLights = materialNeedsLights(material2);
+      updateCommonMaterialProperties(material3, parameters2);
+      materialProperties.needsLights = materialNeedsLights(material3);
       materialProperties.lightsStateVersion = lightsStateVersion;
       if (materialProperties.needsLights) {
         uniforms.ambientLightColor.value = lights.state.ambient;
@@ -17365,32 +17555,32 @@
       materialProperties.uniformsList = uniformsList;
       return program;
     }
-    function updateCommonMaterialProperties(material2, parameters2) {
-      const materialProperties = properties.get(material2);
+    function updateCommonMaterialProperties(material3, parameters2) {
+      const materialProperties = properties.get(material3);
       materialProperties.outputEncoding = parameters2.outputEncoding;
       materialProperties.instancing = parameters2.instancing;
       materialProperties.numClippingPlanes = parameters2.numClippingPlanes;
       materialProperties.numIntersection = parameters2.numClipIntersection;
       materialProperties.vertexAlphas = parameters2.vertexAlphas;
     }
-    function setProgram(camera, scene, material2, object) {
+    function setProgram(camera, scene, material3, object) {
       if (scene.isScene !== true) scene = _emptyScene;
-      textures.resetTextureUnits();
+      textures2.resetTextureUnits();
       const fog = scene.fog;
-      const environment = material2.isMeshStandardMaterial ? scene.environment : null;
+      const environment = material3.isMeshStandardMaterial ? scene.environment : null;
       const encoding = _currentRenderTarget === null ? _this.outputEncoding : _currentRenderTarget.texture.encoding;
-      const envMap = cubemaps.get(material2.envMap || environment);
-      const vertexAlphas = material2.vertexColors === true && object.geometry && object.geometry.attributes.color && object.geometry.attributes.color.itemSize === 4;
-      const materialProperties = properties.get(material2);
+      const envMap = cubemaps.get(material3.envMap || environment);
+      const vertexAlphas = material3.vertexColors === true && object.geometry && object.geometry.attributes.color && object.geometry.attributes.color.itemSize === 4;
+      const materialProperties = properties.get(material3);
       const lights = currentRenderState.state.lights;
       if (_clippingEnabled === true) {
         if (_localClippingEnabled === true || camera !== _currentCamera) {
-          const useCache = camera === _currentCamera && material2.id === _currentMaterialId;
-          clipping.setState(material2, camera, useCache);
+          const useCache = camera === _currentCamera && material3.id === _currentMaterialId;
+          clipping.setState(material3, camera, useCache);
         }
       }
       let needsProgramChange = false;
-      if (material2.version === materialProperties.__version) {
+      if (material3.version === materialProperties.__version) {
         if (materialProperties.needsLights && materialProperties.lightsStateVersion !== lights.state.version) {
           needsProgramChange = true;
         } else if (materialProperties.outputEncoding !== encoding) {
@@ -17401,7 +17591,7 @@
           needsProgramChange = true;
         } else if (materialProperties.envMap !== envMap) {
           needsProgramChange = true;
-        } else if (material2.fog && materialProperties.fog !== fog) {
+        } else if (material3.fog && materialProperties.fog !== fog) {
           needsProgramChange = true;
         } else if (materialProperties.numClippingPlanes !== void 0 && (materialProperties.numClippingPlanes !== clipping.numPlanes || materialProperties.numIntersection !== clipping.numIntersection)) {
           needsProgramChange = true;
@@ -17410,11 +17600,11 @@
         }
       } else {
         needsProgramChange = true;
-        materialProperties.__version = material2.version;
+        materialProperties.__version = material3.version;
       }
       let program = materialProperties.currentProgram;
       if (needsProgramChange === true) {
-        program = getProgram(material2, scene, object);
+        program = getProgram(material3, scene, object);
       }
       let refreshProgram = false;
       let refreshMaterial = false;
@@ -17425,8 +17615,8 @@
         refreshMaterial = true;
         refreshLights = true;
       }
-      if (material2.id !== _currentMaterialId) {
-        _currentMaterialId = material2.id;
+      if (material3.id !== _currentMaterialId) {
+        _currentMaterialId = material3.id;
         refreshMaterial = true;
       }
       if (refreshProgram || _currentCamera !== camera) {
@@ -17443,7 +17633,7 @@
           refreshMaterial = true;
           refreshLights = true;
         }
-        if (material2.isShaderMaterial || material2.isMeshPhongMaterial || material2.isMeshToonMaterial || material2.isMeshStandardMaterial || material2.envMap) {
+        if (material3.isShaderMaterial || material3.isMeshPhongMaterial || material3.isMeshToonMaterial || material3.isMeshStandardMaterial || material3.envMap) {
           const uCamPos = p_uniforms.map.cameraPosition;
           if (uCamPos !== void 0) {
             uCamPos.setValue(
@@ -17452,14 +17642,14 @@
             );
           }
         }
-        if (material2.isMeshPhongMaterial || material2.isMeshToonMaterial || material2.isMeshLambertMaterial || material2.isMeshBasicMaterial || material2.isMeshStandardMaterial || material2.isShaderMaterial) {
+        if (material3.isMeshPhongMaterial || material3.isMeshToonMaterial || material3.isMeshLambertMaterial || material3.isMeshBasicMaterial || material3.isMeshStandardMaterial || material3.isShaderMaterial) {
           p_uniforms.setValue(_gl, "isOrthographic", camera.isOrthographicCamera === true);
         }
-        if (material2.isMeshPhongMaterial || material2.isMeshToonMaterial || material2.isMeshLambertMaterial || material2.isMeshBasicMaterial || material2.isMeshStandardMaterial || material2.isShaderMaterial || material2.isShadowMaterial || material2.skinning) {
+        if (material3.isMeshPhongMaterial || material3.isMeshToonMaterial || material3.isMeshLambertMaterial || material3.isMeshBasicMaterial || material3.isMeshStandardMaterial || material3.isShaderMaterial || material3.isShadowMaterial || material3.skinning) {
           p_uniforms.setValue(_gl, "viewMatrix", camera.matrixWorldInverse);
         }
       }
-      if (material2.skinning) {
+      if (material3.skinning) {
         p_uniforms.setOptional(_gl, object, "bindMatrix");
         p_uniforms.setOptional(_gl, object, "bindMatrixInverse");
         const skeleton = object.skeleton;
@@ -17477,7 +17667,7 @@
               skeleton.boneTexture = boneTexture;
               skeleton.boneTextureSize = size;
             }
-            p_uniforms.setValue(_gl, "boneTexture", skeleton.boneTexture, textures);
+            p_uniforms.setValue(_gl, "boneTexture", skeleton.boneTexture, textures2);
             p_uniforms.setValue(_gl, "boneTextureSize", skeleton.boneTextureSize);
           } else {
             p_uniforms.setOptional(_gl, skeleton, "boneMatrices");
@@ -17493,17 +17683,17 @@
         if (materialProperties.needsLights) {
           markUniformsLightsNeedsUpdate(m_uniforms, refreshLights);
         }
-        if (fog && material2.fog) {
+        if (fog && material3.fog) {
           materials.refreshFogUniforms(m_uniforms, fog);
         }
-        materials.refreshMaterialUniforms(m_uniforms, material2, _pixelRatio, _height);
-        WebGLUniforms.upload(_gl, materialProperties.uniformsList, m_uniforms, textures);
+        materials.refreshMaterialUniforms(m_uniforms, material3, _pixelRatio, _height);
+        WebGLUniforms.upload(_gl, materialProperties.uniformsList, m_uniforms, textures2);
       }
-      if (material2.isShaderMaterial && material2.uniformsNeedUpdate === true) {
-        WebGLUniforms.upload(_gl, materialProperties.uniformsList, m_uniforms, textures);
-        material2.uniformsNeedUpdate = false;
+      if (material3.isShaderMaterial && material3.uniformsNeedUpdate === true) {
+        WebGLUniforms.upload(_gl, materialProperties.uniformsList, m_uniforms, textures2);
+        material3.uniformsNeedUpdate = false;
       }
-      if (material2.isSpriteMaterial) {
+      if (material3.isSpriteMaterial) {
         p_uniforms.setValue(_gl, "center", object.center);
       }
       p_uniforms.setValue(_gl, "modelViewMatrix", object.modelViewMatrix);
@@ -17523,8 +17713,8 @@
       uniforms.rectAreaLights.needsUpdate = value;
       uniforms.hemisphereLights.needsUpdate = value;
     }
-    function materialNeedsLights(material2) {
-      return material2.isMeshLambertMaterial || material2.isMeshToonMaterial || material2.isMeshPhongMaterial || material2.isMeshStandardMaterial || material2.isShadowMaterial || material2.isShaderMaterial && material2.lights === true;
+    function materialNeedsLights(material3) {
+      return material3.isMeshLambertMaterial || material3.isMeshToonMaterial || material3.isMeshPhongMaterial || material3.isMeshStandardMaterial || material3.isShadowMaterial || material3.isShaderMaterial && material3.lights === true;
     }
     this.getActiveCubeFace = function() {
       return _currentActiveCubeFace;
@@ -17540,7 +17730,7 @@
       _currentActiveCubeFace = activeCubeFace;
       _currentActiveMipmapLevel = activeMipmapLevel;
       if (renderTarget && properties.get(renderTarget).__webglFramebuffer === void 0) {
-        textures.setupRenderTarget(renderTarget);
+        textures2.setupRenderTarget(renderTarget);
       }
       let framebuffer = null;
       let isCube = false;
@@ -17624,7 +17814,7 @@
       const width = Math.floor(texture.image.width * levelScale);
       const height = Math.floor(texture.image.height * levelScale);
       const glFormat = utils.convert(texture.format);
-      textures.setTexture2D(texture, 0);
+      textures2.setTexture2D(texture, 0);
       _gl.copyTexImage2D(3553, level, glFormat, position.x, position.y, width, height, 0);
       state.unbindTexture();
     };
@@ -17633,7 +17823,7 @@
       const height = srcTexture.image.height;
       const glFormat = utils.convert(dstTexture.format);
       const glType = utils.convert(dstTexture.type);
-      textures.setTexture2D(dstTexture, 0);
+      textures2.setTexture2D(dstTexture, 0);
       _gl.pixelStorei(37440, dstTexture.flipY);
       _gl.pixelStorei(37441, dstTexture.premultiplyAlpha);
       _gl.pixelStorei(3317, dstTexture.unpackAlignment);
@@ -17659,10 +17849,10 @@
       const glType = utils.convert(dstTexture.type);
       let glTarget;
       if (dstTexture.isDataTexture3D) {
-        textures.setTexture3D(dstTexture, 0);
+        textures2.setTexture3D(dstTexture, 0);
         glTarget = 32879;
       } else if (dstTexture.isDataTexture2DArray) {
-        textures.setTexture2DArray(dstTexture, 0);
+        textures2.setTexture2DArray(dstTexture, 0);
         glTarget = 35866;
       } else {
         console.warn("THREE.WebGLRenderer.copyTextureToTexture3D: only supports THREE.DataTexture3D and THREE.DataTexture2DArray.");
@@ -17703,7 +17893,7 @@
       state.unbindTexture();
     };
     this.initTexture = function(texture) {
-      textures.setTexture2D(texture, 0);
+      textures2.setTexture2D(texture, 0);
       state.unbindTexture();
     };
     this.resetState = function() {
@@ -18055,7 +18245,7 @@
   var _uvB = /* @__PURE__ */ new Vector2();
   var _uvC = /* @__PURE__ */ new Vector2();
   var Sprite = class extends Object3D {
-    constructor(material2) {
+    constructor(material3) {
       super();
       this.type = "Sprite";
       if (_geometry === void 0) {
@@ -18088,7 +18278,7 @@
         _geometry.setAttribute("uv", new InterleavedBufferAttribute(interleavedBuffer, 2, 3, false));
       }
       this.geometry = _geometry;
-      this.material = material2 !== void 0 ? material2 : new SpriteMaterial();
+      this.material = material3 !== void 0 ? material3 : new SpriteMaterial();
       this.center = new Vector2(0.5, 0.5);
     }
     raycast(raycaster, intersects2) {
@@ -18263,8 +18453,8 @@
   var _vector$5 = /* @__PURE__ */ new Vector3();
   var _matrix = /* @__PURE__ */ new Matrix4();
   var SkinnedMesh = class extends Mesh {
-    constructor(geometry, material2) {
-      super(geometry, material2);
+    constructor(geometry, material3) {
+      super(geometry, material3);
       this.type = "SkinnedMesh";
       this.bindMode = "attached";
       this.bindMatrix = new Matrix4();
@@ -18477,8 +18667,8 @@
   var _instanceIntersects = [];
   var _mesh = /* @__PURE__ */ new Mesh();
   var InstancedMesh = class extends Mesh {
-    constructor(geometry, material2, count) {
-      super(geometry, material2);
+    constructor(geometry, material3, count) {
+      super(geometry, material3);
       this.instanceMatrix = new BufferAttribute(new Float32Array(count * 16), 16);
       this.instanceColor = null;
       this.count = count;
@@ -18561,11 +18751,11 @@
   var _ray$1 = /* @__PURE__ */ new Ray();
   var _sphere$1 = /* @__PURE__ */ new Sphere();
   var Line = class extends Object3D {
-    constructor(geometry = new BufferGeometry(), material2 = new LineBasicMaterial()) {
+    constructor(geometry = new BufferGeometry(), material3 = new LineBasicMaterial()) {
       super();
       this.type = "Line";
       this.geometry = geometry;
-      this.material = material2;
+      this.material = material3;
       this.updateMorphTargets();
     }
     copy(source) {
@@ -18698,8 +18888,8 @@
   var _start = /* @__PURE__ */ new Vector3();
   var _end = /* @__PURE__ */ new Vector3();
   var LineSegments = class extends Line {
-    constructor(geometry, material2) {
-      super(geometry, material2);
+    constructor(geometry, material3) {
+      super(geometry, material3);
       this.type = "LineSegments";
     }
     computeLineDistances() {
@@ -18726,8 +18916,8 @@
   };
   LineSegments.prototype.isLineSegments = true;
   var LineLoop = class extends Line {
-    constructor(geometry, material2) {
-      super(geometry, material2);
+    constructor(geometry, material3) {
+      super(geometry, material3);
       this.type = "LineLoop";
     }
   };
@@ -18761,11 +18951,11 @@
   var _sphere = /* @__PURE__ */ new Sphere();
   var _position$2 = /* @__PURE__ */ new Vector3();
   var Points = class extends Object3D {
-    constructor(geometry = new BufferGeometry(), material2 = new PointsMaterial()) {
+    constructor(geometry = new BufferGeometry(), material3 = new PointsMaterial()) {
       super();
       this.type = "Points";
       this.geometry = geometry;
-      this.material = material2;
+      this.material = material3;
       this.updateMorphTargets();
     }
     copy(source) {
@@ -24751,154 +24941,154 @@
       }, onProgress, onError);
     }
     parse(json) {
-      const textures = this.textures;
+      const textures2 = this.textures;
       function getTexture(name) {
-        if (textures[name] === void 0) {
+        if (textures2[name] === void 0) {
           console.warn("THREE.MaterialLoader: Undefined texture", name);
         }
-        return textures[name];
+        return textures2[name];
       }
-      const material2 = new Materials[json.type]();
-      if (json.uuid !== void 0) material2.uuid = json.uuid;
-      if (json.name !== void 0) material2.name = json.name;
-      if (json.color !== void 0 && material2.color !== void 0) material2.color.setHex(json.color);
-      if (json.roughness !== void 0) material2.roughness = json.roughness;
-      if (json.metalness !== void 0) material2.metalness = json.metalness;
-      if (json.sheen !== void 0) material2.sheen = new Color().setHex(json.sheen);
-      if (json.emissive !== void 0 && material2.emissive !== void 0) material2.emissive.setHex(json.emissive);
-      if (json.specular !== void 0 && material2.specular !== void 0) material2.specular.setHex(json.specular);
-      if (json.shininess !== void 0) material2.shininess = json.shininess;
-      if (json.clearcoat !== void 0) material2.clearcoat = json.clearcoat;
-      if (json.clearcoatRoughness !== void 0) material2.clearcoatRoughness = json.clearcoatRoughness;
-      if (json.fog !== void 0) material2.fog = json.fog;
-      if (json.flatShading !== void 0) material2.flatShading = json.flatShading;
-      if (json.blending !== void 0) material2.blending = json.blending;
-      if (json.combine !== void 0) material2.combine = json.combine;
-      if (json.side !== void 0) material2.side = json.side;
-      if (json.shadowSide !== void 0) material2.shadowSide = json.shadowSide;
-      if (json.opacity !== void 0) material2.opacity = json.opacity;
-      if (json.transparent !== void 0) material2.transparent = json.transparent;
-      if (json.alphaTest !== void 0) material2.alphaTest = json.alphaTest;
-      if (json.depthTest !== void 0) material2.depthTest = json.depthTest;
-      if (json.depthWrite !== void 0) material2.depthWrite = json.depthWrite;
-      if (json.colorWrite !== void 0) material2.colorWrite = json.colorWrite;
-      if (json.stencilWrite !== void 0) material2.stencilWrite = json.stencilWrite;
-      if (json.stencilWriteMask !== void 0) material2.stencilWriteMask = json.stencilWriteMask;
-      if (json.stencilFunc !== void 0) material2.stencilFunc = json.stencilFunc;
-      if (json.stencilRef !== void 0) material2.stencilRef = json.stencilRef;
-      if (json.stencilFuncMask !== void 0) material2.stencilFuncMask = json.stencilFuncMask;
-      if (json.stencilFail !== void 0) material2.stencilFail = json.stencilFail;
-      if (json.stencilZFail !== void 0) material2.stencilZFail = json.stencilZFail;
-      if (json.stencilZPass !== void 0) material2.stencilZPass = json.stencilZPass;
-      if (json.wireframe !== void 0) material2.wireframe = json.wireframe;
-      if (json.wireframeLinewidth !== void 0) material2.wireframeLinewidth = json.wireframeLinewidth;
-      if (json.wireframeLinecap !== void 0) material2.wireframeLinecap = json.wireframeLinecap;
-      if (json.wireframeLinejoin !== void 0) material2.wireframeLinejoin = json.wireframeLinejoin;
-      if (json.rotation !== void 0) material2.rotation = json.rotation;
-      if (json.linewidth !== 1) material2.linewidth = json.linewidth;
-      if (json.dashSize !== void 0) material2.dashSize = json.dashSize;
-      if (json.gapSize !== void 0) material2.gapSize = json.gapSize;
-      if (json.scale !== void 0) material2.scale = json.scale;
-      if (json.polygonOffset !== void 0) material2.polygonOffset = json.polygonOffset;
-      if (json.polygonOffsetFactor !== void 0) material2.polygonOffsetFactor = json.polygonOffsetFactor;
-      if (json.polygonOffsetUnits !== void 0) material2.polygonOffsetUnits = json.polygonOffsetUnits;
-      if (json.skinning !== void 0) material2.skinning = json.skinning;
-      if (json.morphTargets !== void 0) material2.morphTargets = json.morphTargets;
-      if (json.morphNormals !== void 0) material2.morphNormals = json.morphNormals;
-      if (json.dithering !== void 0) material2.dithering = json.dithering;
-      if (json.alphaToCoverage !== void 0) material2.alphaToCoverage = json.alphaToCoverage;
-      if (json.premultipliedAlpha !== void 0) material2.premultipliedAlpha = json.premultipliedAlpha;
-      if (json.vertexTangents !== void 0) material2.vertexTangents = json.vertexTangents;
-      if (json.visible !== void 0) material2.visible = json.visible;
-      if (json.toneMapped !== void 0) material2.toneMapped = json.toneMapped;
-      if (json.userData !== void 0) material2.userData = json.userData;
+      const material3 = new Materials[json.type]();
+      if (json.uuid !== void 0) material3.uuid = json.uuid;
+      if (json.name !== void 0) material3.name = json.name;
+      if (json.color !== void 0 && material3.color !== void 0) material3.color.setHex(json.color);
+      if (json.roughness !== void 0) material3.roughness = json.roughness;
+      if (json.metalness !== void 0) material3.metalness = json.metalness;
+      if (json.sheen !== void 0) material3.sheen = new Color().setHex(json.sheen);
+      if (json.emissive !== void 0 && material3.emissive !== void 0) material3.emissive.setHex(json.emissive);
+      if (json.specular !== void 0 && material3.specular !== void 0) material3.specular.setHex(json.specular);
+      if (json.shininess !== void 0) material3.shininess = json.shininess;
+      if (json.clearcoat !== void 0) material3.clearcoat = json.clearcoat;
+      if (json.clearcoatRoughness !== void 0) material3.clearcoatRoughness = json.clearcoatRoughness;
+      if (json.fog !== void 0) material3.fog = json.fog;
+      if (json.flatShading !== void 0) material3.flatShading = json.flatShading;
+      if (json.blending !== void 0) material3.blending = json.blending;
+      if (json.combine !== void 0) material3.combine = json.combine;
+      if (json.side !== void 0) material3.side = json.side;
+      if (json.shadowSide !== void 0) material3.shadowSide = json.shadowSide;
+      if (json.opacity !== void 0) material3.opacity = json.opacity;
+      if (json.transparent !== void 0) material3.transparent = json.transparent;
+      if (json.alphaTest !== void 0) material3.alphaTest = json.alphaTest;
+      if (json.depthTest !== void 0) material3.depthTest = json.depthTest;
+      if (json.depthWrite !== void 0) material3.depthWrite = json.depthWrite;
+      if (json.colorWrite !== void 0) material3.colorWrite = json.colorWrite;
+      if (json.stencilWrite !== void 0) material3.stencilWrite = json.stencilWrite;
+      if (json.stencilWriteMask !== void 0) material3.stencilWriteMask = json.stencilWriteMask;
+      if (json.stencilFunc !== void 0) material3.stencilFunc = json.stencilFunc;
+      if (json.stencilRef !== void 0) material3.stencilRef = json.stencilRef;
+      if (json.stencilFuncMask !== void 0) material3.stencilFuncMask = json.stencilFuncMask;
+      if (json.stencilFail !== void 0) material3.stencilFail = json.stencilFail;
+      if (json.stencilZFail !== void 0) material3.stencilZFail = json.stencilZFail;
+      if (json.stencilZPass !== void 0) material3.stencilZPass = json.stencilZPass;
+      if (json.wireframe !== void 0) material3.wireframe = json.wireframe;
+      if (json.wireframeLinewidth !== void 0) material3.wireframeLinewidth = json.wireframeLinewidth;
+      if (json.wireframeLinecap !== void 0) material3.wireframeLinecap = json.wireframeLinecap;
+      if (json.wireframeLinejoin !== void 0) material3.wireframeLinejoin = json.wireframeLinejoin;
+      if (json.rotation !== void 0) material3.rotation = json.rotation;
+      if (json.linewidth !== 1) material3.linewidth = json.linewidth;
+      if (json.dashSize !== void 0) material3.dashSize = json.dashSize;
+      if (json.gapSize !== void 0) material3.gapSize = json.gapSize;
+      if (json.scale !== void 0) material3.scale = json.scale;
+      if (json.polygonOffset !== void 0) material3.polygonOffset = json.polygonOffset;
+      if (json.polygonOffsetFactor !== void 0) material3.polygonOffsetFactor = json.polygonOffsetFactor;
+      if (json.polygonOffsetUnits !== void 0) material3.polygonOffsetUnits = json.polygonOffsetUnits;
+      if (json.skinning !== void 0) material3.skinning = json.skinning;
+      if (json.morphTargets !== void 0) material3.morphTargets = json.morphTargets;
+      if (json.morphNormals !== void 0) material3.morphNormals = json.morphNormals;
+      if (json.dithering !== void 0) material3.dithering = json.dithering;
+      if (json.alphaToCoverage !== void 0) material3.alphaToCoverage = json.alphaToCoverage;
+      if (json.premultipliedAlpha !== void 0) material3.premultipliedAlpha = json.premultipliedAlpha;
+      if (json.vertexTangents !== void 0) material3.vertexTangents = json.vertexTangents;
+      if (json.visible !== void 0) material3.visible = json.visible;
+      if (json.toneMapped !== void 0) material3.toneMapped = json.toneMapped;
+      if (json.userData !== void 0) material3.userData = json.userData;
       if (json.vertexColors !== void 0) {
         if (typeof json.vertexColors === "number") {
-          material2.vertexColors = json.vertexColors > 0 ? true : false;
+          material3.vertexColors = json.vertexColors > 0 ? true : false;
         } else {
-          material2.vertexColors = json.vertexColors;
+          material3.vertexColors = json.vertexColors;
         }
       }
       if (json.uniforms !== void 0) {
         for (const name in json.uniforms) {
           const uniform = json.uniforms[name];
-          material2.uniforms[name] = {};
+          material3.uniforms[name] = {};
           switch (uniform.type) {
             case "t":
-              material2.uniforms[name].value = getTexture(uniform.value);
+              material3.uniforms[name].value = getTexture(uniform.value);
               break;
             case "c":
-              material2.uniforms[name].value = new Color().setHex(uniform.value);
+              material3.uniforms[name].value = new Color().setHex(uniform.value);
               break;
             case "v2":
-              material2.uniforms[name].value = new Vector2().fromArray(uniform.value);
+              material3.uniforms[name].value = new Vector2().fromArray(uniform.value);
               break;
             case "v3":
-              material2.uniforms[name].value = new Vector3().fromArray(uniform.value);
+              material3.uniforms[name].value = new Vector3().fromArray(uniform.value);
               break;
             case "v4":
-              material2.uniforms[name].value = new Vector4().fromArray(uniform.value);
+              material3.uniforms[name].value = new Vector4().fromArray(uniform.value);
               break;
             case "m3":
-              material2.uniforms[name].value = new Matrix3().fromArray(uniform.value);
+              material3.uniforms[name].value = new Matrix3().fromArray(uniform.value);
               break;
             case "m4":
-              material2.uniforms[name].value = new Matrix4().fromArray(uniform.value);
+              material3.uniforms[name].value = new Matrix4().fromArray(uniform.value);
               break;
             default:
-              material2.uniforms[name].value = uniform.value;
+              material3.uniforms[name].value = uniform.value;
           }
         }
       }
-      if (json.defines !== void 0) material2.defines = json.defines;
-      if (json.vertexShader !== void 0) material2.vertexShader = json.vertexShader;
-      if (json.fragmentShader !== void 0) material2.fragmentShader = json.fragmentShader;
+      if (json.defines !== void 0) material3.defines = json.defines;
+      if (json.vertexShader !== void 0) material3.vertexShader = json.vertexShader;
+      if (json.fragmentShader !== void 0) material3.fragmentShader = json.fragmentShader;
       if (json.extensions !== void 0) {
         for (const key in json.extensions) {
-          material2.extensions[key] = json.extensions[key];
+          material3.extensions[key] = json.extensions[key];
         }
       }
-      if (json.shading !== void 0) material2.flatShading = json.shading === 1;
-      if (json.size !== void 0) material2.size = json.size;
-      if (json.sizeAttenuation !== void 0) material2.sizeAttenuation = json.sizeAttenuation;
-      if (json.map !== void 0) material2.map = getTexture(json.map);
-      if (json.matcap !== void 0) material2.matcap = getTexture(json.matcap);
-      if (json.alphaMap !== void 0) material2.alphaMap = getTexture(json.alphaMap);
-      if (json.bumpMap !== void 0) material2.bumpMap = getTexture(json.bumpMap);
-      if (json.bumpScale !== void 0) material2.bumpScale = json.bumpScale;
-      if (json.normalMap !== void 0) material2.normalMap = getTexture(json.normalMap);
-      if (json.normalMapType !== void 0) material2.normalMapType = json.normalMapType;
+      if (json.shading !== void 0) material3.flatShading = json.shading === 1;
+      if (json.size !== void 0) material3.size = json.size;
+      if (json.sizeAttenuation !== void 0) material3.sizeAttenuation = json.sizeAttenuation;
+      if (json.map !== void 0) material3.map = getTexture(json.map);
+      if (json.matcap !== void 0) material3.matcap = getTexture(json.matcap);
+      if (json.alphaMap !== void 0) material3.alphaMap = getTexture(json.alphaMap);
+      if (json.bumpMap !== void 0) material3.bumpMap = getTexture(json.bumpMap);
+      if (json.bumpScale !== void 0) material3.bumpScale = json.bumpScale;
+      if (json.normalMap !== void 0) material3.normalMap = getTexture(json.normalMap);
+      if (json.normalMapType !== void 0) material3.normalMapType = json.normalMapType;
       if (json.normalScale !== void 0) {
         let normalScale = json.normalScale;
         if (Array.isArray(normalScale) === false) {
           normalScale = [normalScale, normalScale];
         }
-        material2.normalScale = new Vector2().fromArray(normalScale);
+        material3.normalScale = new Vector2().fromArray(normalScale);
       }
-      if (json.displacementMap !== void 0) material2.displacementMap = getTexture(json.displacementMap);
-      if (json.displacementScale !== void 0) material2.displacementScale = json.displacementScale;
-      if (json.displacementBias !== void 0) material2.displacementBias = json.displacementBias;
-      if (json.roughnessMap !== void 0) material2.roughnessMap = getTexture(json.roughnessMap);
-      if (json.metalnessMap !== void 0) material2.metalnessMap = getTexture(json.metalnessMap);
-      if (json.emissiveMap !== void 0) material2.emissiveMap = getTexture(json.emissiveMap);
-      if (json.emissiveIntensity !== void 0) material2.emissiveIntensity = json.emissiveIntensity;
-      if (json.specularMap !== void 0) material2.specularMap = getTexture(json.specularMap);
-      if (json.envMap !== void 0) material2.envMap = getTexture(json.envMap);
-      if (json.envMapIntensity !== void 0) material2.envMapIntensity = json.envMapIntensity;
-      if (json.reflectivity !== void 0) material2.reflectivity = json.reflectivity;
-      if (json.refractionRatio !== void 0) material2.refractionRatio = json.refractionRatio;
-      if (json.lightMap !== void 0) material2.lightMap = getTexture(json.lightMap);
-      if (json.lightMapIntensity !== void 0) material2.lightMapIntensity = json.lightMapIntensity;
-      if (json.aoMap !== void 0) material2.aoMap = getTexture(json.aoMap);
-      if (json.aoMapIntensity !== void 0) material2.aoMapIntensity = json.aoMapIntensity;
-      if (json.gradientMap !== void 0) material2.gradientMap = getTexture(json.gradientMap);
-      if (json.clearcoatMap !== void 0) material2.clearcoatMap = getTexture(json.clearcoatMap);
-      if (json.clearcoatRoughnessMap !== void 0) material2.clearcoatRoughnessMap = getTexture(json.clearcoatRoughnessMap);
-      if (json.clearcoatNormalMap !== void 0) material2.clearcoatNormalMap = getTexture(json.clearcoatNormalMap);
-      if (json.clearcoatNormalScale !== void 0) material2.clearcoatNormalScale = new Vector2().fromArray(json.clearcoatNormalScale);
-      if (json.transmission !== void 0) material2.transmission = json.transmission;
-      if (json.transmissionMap !== void 0) material2.transmissionMap = getTexture(json.transmissionMap);
-      return material2;
+      if (json.displacementMap !== void 0) material3.displacementMap = getTexture(json.displacementMap);
+      if (json.displacementScale !== void 0) material3.displacementScale = json.displacementScale;
+      if (json.displacementBias !== void 0) material3.displacementBias = json.displacementBias;
+      if (json.roughnessMap !== void 0) material3.roughnessMap = getTexture(json.roughnessMap);
+      if (json.metalnessMap !== void 0) material3.metalnessMap = getTexture(json.metalnessMap);
+      if (json.emissiveMap !== void 0) material3.emissiveMap = getTexture(json.emissiveMap);
+      if (json.emissiveIntensity !== void 0) material3.emissiveIntensity = json.emissiveIntensity;
+      if (json.specularMap !== void 0) material3.specularMap = getTexture(json.specularMap);
+      if (json.envMap !== void 0) material3.envMap = getTexture(json.envMap);
+      if (json.envMapIntensity !== void 0) material3.envMapIntensity = json.envMapIntensity;
+      if (json.reflectivity !== void 0) material3.reflectivity = json.reflectivity;
+      if (json.refractionRatio !== void 0) material3.refractionRatio = json.refractionRatio;
+      if (json.lightMap !== void 0) material3.lightMap = getTexture(json.lightMap);
+      if (json.lightMapIntensity !== void 0) material3.lightMapIntensity = json.lightMapIntensity;
+      if (json.aoMap !== void 0) material3.aoMap = getTexture(json.aoMap);
+      if (json.aoMapIntensity !== void 0) material3.aoMapIntensity = json.aoMapIntensity;
+      if (json.gradientMap !== void 0) material3.gradientMap = getTexture(json.gradientMap);
+      if (json.clearcoatMap !== void 0) material3.clearcoatMap = getTexture(json.clearcoatMap);
+      if (json.clearcoatRoughnessMap !== void 0) material3.clearcoatRoughnessMap = getTexture(json.clearcoatRoughnessMap);
+      if (json.clearcoatNormalMap !== void 0) material3.clearcoatNormalMap = getTexture(json.clearcoatNormalMap);
+      if (json.clearcoatNormalScale !== void 0) material3.clearcoatNormalScale = new Vector2().fromArray(json.clearcoatNormalScale);
+      if (json.transmission !== void 0) material3.transmission = json.transmission;
+      if (json.transmissionMap !== void 0) material3.transmissionMap = getTexture(json.transmissionMap);
+      return material3;
     }
     setTextures(value) {
       this.textures = value;
@@ -25123,8 +25313,8 @@
       const images = this.parseImages(json.images, function() {
         if (onLoad !== void 0) onLoad(object);
       });
-      const textures = this.parseTextures(json.textures, images);
-      const materials = this.parseMaterials(json.materials, textures);
+      const textures2 = this.parseTextures(json.textures, images);
+      const materials = this.parseMaterials(json.materials, textures2);
       const object = this.parseObject(json.object, geometries, materials, animations);
       const skeletons = this.parseSkeletons(json.skeletons, object);
       this.bindSkeletons(object, skeletons);
@@ -25359,22 +25549,22 @@
       }
       return geometries;
     }
-    parseMaterials(json, textures) {
+    parseMaterials(json, textures2) {
       const cache2 = {};
       const materials = {};
       if (json !== void 0) {
         const loader = new MaterialLoader();
-        loader.setTextures(textures);
+        loader.setTextures(textures2);
         for (let i = 0, l = json.length; i < l; i++) {
           const data = json[i];
           if (data.type === "MultiMaterial") {
             const array = [];
             for (let j = 0; j < data.materials.length; j++) {
-              const material2 = data.materials[j];
-              if (cache2[material2.uuid] === void 0) {
-                cache2[material2.uuid] = loader.parse(material2);
+              const material3 = data.materials[j];
+              if (cache2[material3.uuid] === void 0) {
+                cache2[material3.uuid] = loader.parse(material3);
               }
-              array.push(cache2[material2.uuid]);
+              array.push(cache2[material3.uuid]);
             }
             materials[data.uuid] = array;
           } else {
@@ -25464,7 +25654,7 @@
         console.warn("THREE.ObjectLoader.parseTexture: Constant should be in numeric form.", value);
         return type[value];
       }
-      const textures = {};
+      const textures2 = {};
       if (json !== void 0) {
         for (let i = 0, l = json.length; i < l; i++) {
           const data = json[i];
@@ -25507,10 +25697,10 @@
           if (data.flipY !== void 0) texture.flipY = data.flipY;
           if (data.premultiplyAlpha !== void 0) texture.premultiplyAlpha = data.premultiplyAlpha;
           if (data.unpackAlignment !== void 0) texture.unpackAlignment = data.unpackAlignment;
-          textures[data.uuid] = texture;
+          textures2[data.uuid] = texture;
         }
       }
-      return textures;
+      return textures2;
     }
     parseObject(data, geometries, materials, animations) {
       let object;
@@ -25538,7 +25728,7 @@
         }
         return materials[name];
       }
-      let geometry, material2;
+      let geometry, material3;
       switch (data.type) {
         case "Scene":
           object = new Scene();
@@ -25591,24 +25781,24 @@
           break;
         case "SkinnedMesh":
           geometry = getGeometry(data.geometry);
-          material2 = getMaterial(data.material);
-          object = new SkinnedMesh(geometry, material2);
+          material3 = getMaterial(data.material);
+          object = new SkinnedMesh(geometry, material3);
           if (data.bindMode !== void 0) object.bindMode = data.bindMode;
           if (data.bindMatrix !== void 0) object.bindMatrix.fromArray(data.bindMatrix);
           if (data.skeleton !== void 0) object.skeleton = data.skeleton;
           break;
         case "Mesh":
           geometry = getGeometry(data.geometry);
-          material2 = getMaterial(data.material);
-          object = new Mesh(geometry, material2);
+          material3 = getMaterial(data.material);
+          object = new Mesh(geometry, material3);
           break;
         case "InstancedMesh":
           geometry = getGeometry(data.geometry);
-          material2 = getMaterial(data.material);
+          material3 = getMaterial(data.material);
           const count = data.count;
           const instanceMatrix = data.instanceMatrix;
           const instanceColor = data.instanceColor;
-          object = new InstancedMesh(geometry, material2, count);
+          object = new InstancedMesh(geometry, material3, count);
           object.instanceMatrix = new BufferAttribute(new Float32Array(instanceMatrix.array), 16);
           if (instanceColor !== void 0) object.instanceColor = new BufferAttribute(new Float32Array(instanceColor.array), instanceColor.itemSize);
           break;
@@ -28359,9 +28549,9 @@
     }
   };
   var ImmediateRenderObject = class extends Object3D {
-    constructor(material2) {
+    constructor(material3) {
       super();
-      this.material = material2;
+      this.material = material3;
       this.render = function() {
       };
       this.hasPositions = false;
@@ -28431,8 +28621,8 @@
         );
       }
       geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-      const material2 = new LineBasicMaterial({ fog: false, toneMapped: false });
-      this.cone = new LineSegments(geometry, material2);
+      const material3 = new LineBasicMaterial({ fog: false, toneMapped: false });
+      this.cone = new LineSegments(geometry, material3);
       this.add(this.cone);
       this.update();
     }
@@ -28476,8 +28666,8 @@
       }
       geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
       geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-      const material2 = new LineBasicMaterial({ vertexColors: true, depthTest: false, depthWrite: false, toneMapped: false, transparent: true });
-      super(geometry, material2);
+      const material3 = new LineBasicMaterial({ vertexColors: true, depthTest: false, depthWrite: false, toneMapped: false, transparent: true });
+      super(geometry, material3);
       this.type = "SkeletonHelper";
       this.isSkeletonHelper = true;
       this.root = object;
@@ -28519,8 +28709,8 @@
   var PointLightHelper = class extends Mesh {
     constructor(light, sphereSize, color) {
       const geometry = new SphereGeometry(sphereSize, 4, 2);
-      const material2 = new MeshBasicMaterial({ wireframe: true, fog: false, toneMapped: false });
-      super(geometry, material2);
+      const material3 = new MeshBasicMaterial({ wireframe: true, fog: false, toneMapped: false });
+      super(geometry, material3);
       this.light = light;
       this.light.updateMatrixWorld();
       this.color = color;
@@ -28607,8 +28797,8 @@
       const geometry = new BufferGeometry();
       geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
       geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-      const material2 = new LineBasicMaterial({ vertexColors: true, toneMapped: false });
-      super(geometry, material2);
+      const material3 = new LineBasicMaterial({ vertexColors: true, toneMapped: false });
+      super(geometry, material3);
       this.type = "GridHelper";
     }
   };
@@ -28647,8 +28837,8 @@
       const geometry = new BufferGeometry();
       geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
       geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-      const material2 = new LineBasicMaterial({ vertexColors: true, toneMapped: false });
-      super(geometry, material2);
+      const material3 = new LineBasicMaterial({ vertexColors: true, toneMapped: false });
+      super(geometry, material3);
       this.type = "PolarGridHelper";
     }
   };
@@ -28682,12 +28872,12 @@
         size,
         0
       ], 3));
-      const material2 = new LineBasicMaterial({ fog: false, toneMapped: false });
-      this.lightPlane = new Line(geometry, material2);
+      const material3 = new LineBasicMaterial({ fog: false, toneMapped: false });
+      this.lightPlane = new Line(geometry, material3);
       this.add(this.lightPlane);
       geometry = new BufferGeometry();
       geometry.setAttribute("position", new Float32BufferAttribute([0, 0, 0, 0, 0, 1], 3));
-      this.targetLine = new Line(geometry, material2);
+      this.targetLine = new Line(geometry, material3);
       this.add(this.targetLine);
       this.update();
     }
@@ -28718,7 +28908,7 @@
   var CameraHelper = class extends LineSegments {
     constructor(camera) {
       const geometry = new BufferGeometry();
-      const material2 = new LineBasicMaterial({ color: 16777215, vertexColors: true, toneMapped: false });
+      const material3 = new LineBasicMaterial({ color: 16777215, vertexColors: true, toneMapped: false });
       const vertices = [];
       const colors = [];
       const pointMap = {};
@@ -28766,7 +28956,7 @@
       }
       geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
       geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-      super(geometry, material2);
+      super(geometry, material3);
       this.type = "CameraHelper";
       this.camera = camera;
       if (this.camera.updateProjectionMatrix) this.camera.updateProjectionMatrix();
@@ -29027,8 +29217,8 @@
       const geometry = new BufferGeometry();
       geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
       geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-      const material2 = new LineBasicMaterial({ vertexColors: true, toneMapped: false });
-      super(geometry, material2);
+      const material3 = new LineBasicMaterial({ vertexColors: true, toneMapped: false });
+      super(geometry, material3);
       this.type = "AxesHelper";
     }
     dispose() {
@@ -29214,8 +29404,8 @@
       this._pingPongRenderTarget = _createRenderTarget(params);
       return cubeUVRenderTarget;
     }
-    _compileMaterial(material2) {
-      const tmpMesh = new Mesh(_lodPlanes[0], material2);
+    _compileMaterial(material3) {
+      const tmpMesh = new Mesh(_lodPlanes[0], material3);
       this._renderer.compile(tmpMesh, _flatCamera);
     }
     _sceneToCubeUV(scene, near, far, cubeUVRenderTarget) {
@@ -29288,9 +29478,9 @@
           this._equirectShader = _getEquirectShader();
         }
       }
-      const material2 = texture.isCubeTexture ? this._cubemapShader : this._equirectShader;
-      const mesh2 = new Mesh(_lodPlanes[0], material2);
-      const uniforms = material2.uniforms;
+      const material3 = texture.isCubeTexture ? this._cubemapShader : this._equirectShader;
+      const mesh2 = new Mesh(_lodPlanes[0], material3);
+      const uniforms = material3.uniforms;
       uniforms["envMap"].value = texture;
       if (!texture.isCubeTexture) {
         uniforms["texelSize"].value.set(1 / texture.image.width, 1 / texture.image.height);
@@ -29828,17 +30018,17 @@
     };
     return materials;
   }
-  function PointCloud(geometry, material2) {
+  function PointCloud(geometry, material3) {
     console.warn("THREE.PointCloud has been renamed to THREE.Points.");
-    return new Points(geometry, material2);
+    return new Points(geometry, material3);
   }
-  function Particle(material2) {
+  function Particle(material3) {
     console.warn("THREE.Particle has been renamed to THREE.Sprite.");
-    return new Sprite(material2);
+    return new Sprite(material3);
   }
-  function ParticleSystem(geometry, material2) {
+  function ParticleSystem(geometry, material3) {
     console.warn("THREE.ParticleSystem has been renamed to THREE.Points.");
-    return new Points(geometry, material2);
+    return new Points(geometry, material3);
   }
   function PointCloudMaterial(parameters) {
     console.warn("THREE.PointCloudMaterial has been renamed to THREE.PointsMaterial.");
@@ -31812,11 +32002,260 @@
   };
   var TextureGenerator_default = TextureGenerator;
 
+  // js/graphics/DecorModels.js
+  var textures = /* @__PURE__ */ new Map();
+  function material(color) {
+    return new MeshStandardMaterial({ color, roughness: 0.95 });
+  }
+  function part(parent, geometry, mat3, x = 0, y = 0, z = 0) {
+    const m = new Mesh(geometry, mat3);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    parent.add(m);
+    return m;
+  }
+  function createDecor(item) {
+    const t = DECOR_CATALOG.find((d) => d.id === item.templateId);
+    if (!t) return null;
+    const s = item.size, wood = material(t.color), brass = material(11768128);
+    if (typeof document !== "undefined")
+      wood.map = TextureGenerator_default.mottleTexture(
+        `decor-${t.id}`,
+        t.color,
+        [2698536, 12693389, 7956865],
+        { count: 90, alpha: 0.25, speckle: 1e3 }
+      );
+    let geo;
+    if (t.shape === "ship")
+      geo = new BoxGeometry(s * 0.78, s * 0.16, s * 0.3);
+    else if (t.shape === "chest")
+      geo = new BoxGeometry(s * 0.78, s * 0.38, s * 0.5);
+    else if (t.shape === "arch")
+      geo = new TorusGeometry(s * 0.32, s * 0.12, 8, 24, Math.PI);
+    else {
+      geo = new DodecahedronGeometry(s * 0.5, 2);
+      const p = geo.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+        const f = 0.82 + 0.12 * Math.sin(x / s * 23 + y / s * 13) * Math.cos(z / s * 27);
+        p.setXYZ(i, x * f, y * f, z * f);
+      }
+      geo.scale(
+        1,
+        t.shape === "shelf" ? 0.24 : t.shape === "pebble" ? 0.55 : 0.8,
+        0.72
+      );
+      geo.computeVertexNormals();
+    }
+    geo.computeBoundingBox();
+    geo.translate(0, -geo.boundingBox.min.y, 0);
+    const root = new Mesh(geo, wood);
+    root.castShadow = true;
+    root.receiveShadow = true;
+    if (t.shape === "ship") {
+      for (let k = 0; k < 7; k++)
+        part(
+          root,
+          new BoxGeometry(s * 0.015, s * 0.03, s * 0.32),
+          material(3680030),
+          s * (k - 3) * 0.11,
+          s * 0.16
+        );
+      for (const side of [-1, 1]) {
+        const bow = part(
+          root,
+          new ConeGeometry(s * 0.15, s * 0.22, 4),
+          wood,
+          side * s * 0.39,
+          s * 0.08
+        );
+        bow.rotation.z = -side * Math.PI / 2;
+        bow.rotation.x = Math.PI / 4;
+      }
+      part(
+        root,
+        new CylinderGeometry(s * 0.014, s * 0.02, s * 0.52, 8),
+        wood,
+        0,
+        s * 0.4
+      );
+      part(
+        root,
+        new BoxGeometry(s * 0.4, s * 0.014, s * 0.014),
+        wood,
+        0,
+        s * 0.57
+      );
+      const sail = part(
+        root,
+        new PlaneGeometry(s * 0.32, s * 0.23),
+        new MeshStandardMaterial({
+          color: 12366486,
+          roughness: 1,
+          side: DoubleSide
+        }),
+        -0.025 * s,
+        s * 0.43,
+        0.012 * s
+      );
+      sail.rotation.y = 0.12;
+      for (const side of [-1, 1])
+        for (let i = 0; i < 4; i++)
+          part(
+            root,
+            new TorusGeometry(s * 0.025, s * 7e-3, 5, 12),
+            brass,
+            s * (i - 1.5) * 0.15,
+            s * 0.09,
+            side * s * 0.153
+          );
+    } else if (t.shape === "chest") {
+      const lid = part(
+        root,
+        new CylinderGeometry(
+          s * 0.25,
+          s * 0.25,
+          s * 0.78,
+          16,
+          1,
+          false,
+          0,
+          Math.PI
+        ),
+        wood,
+        0,
+        s * 0.38
+      );
+      lid.rotation.z = Math.PI / 2;
+      for (const x of [-s * 0.27, s * 0.27])
+        part(
+          root,
+          new BoxGeometry(s * 0.035, s * 0.43, s * 0.515),
+          brass,
+          x,
+          s * 0.215
+        );
+      part(
+        root,
+        new BoxGeometry(s * 0.09, s * 0.12, s * 0.025),
+        brass,
+        0,
+        s * 0.32,
+        s * 0.26
+      );
+      for (let i = 0; i < 9; i++) {
+        const coin = part(
+          root,
+          new CylinderGeometry(s * 0.035, s * 0.035, s * 0.012, 12),
+          brass,
+          (i % 3 - 1) * s * 0.055,
+          s * 0.42 + Math.floor(i / 3) * s * 0.012,
+          s * 0.1
+        );
+        coin.rotation.x = 0.2;
+      }
+    }
+    root.updateMatrixWorld(true);
+    const bounds = new Box3().setFromObject(root);
+    const span = Math.hypot(
+      bounds.max.x - bounds.min.x,
+      bounds.max.z - bounds.min.z
+    );
+    root.geometry.translate(0, -bounds.min.y, 0);
+    for (const child of root.children) child.position.y -= bounds.min.y;
+    root.scale.setScalar(Math.min(1, s / span));
+    return root;
+  }
+  function createBackground(state, spec) {
+    const t = BACKGROUNDS.find((b) => b.id === state.activeBackground);
+    if (!t) return null;
+    let tex = textures.get(t.id);
+    if (!tex && typeof document !== "undefined") {
+      const c = document.createElement("canvas");
+      c.width = 1024;
+      c.height = 512;
+      const ctx = c.getContext("2d");
+      const gradient = ctx.createLinearGradient(0, 0, 0, 512);
+      t.colors.forEach((color, i) => gradient.addColorStop(i / 2, color));
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 1024, 512);
+      for (let layer = 0; layer < 3; layer++) {
+        ctx.fillStyle = ["#174d5c", "#123b48", "#0a2c39"][layer];
+        ctx.beginPath();
+        ctx.moveTo(0, 512);
+        for (let x = 0; x <= 1024; x += 8) {
+          const y = 390 + layer * 30 + Math.sin(x * 0.017 + layer) * 35 + Math.sin(x * 0.041) * 12;
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(1024, 512);
+        ctx.fill();
+      }
+      if (t.id === "backgroundKelp")
+        for (let i = 0; i < 28; i++) {
+          ctx.strokeStyle = i % 2 ? "#527846" : "#2d6048";
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.moveTo(i * 39, 512);
+          ctx.bezierCurveTo(
+            i * 39 - 35,
+            320,
+            i * 39 + 45,
+            260,
+            i * 39,
+            120 + i % 5 * 25
+          );
+          ctx.stroke();
+          for (let j = 0; j < 7; j++) {
+            ctx.beginPath();
+            ctx.ellipse(
+              i * 39 + Math.sin(j) * 13,
+              460 - j * 40,
+              18,
+              6,
+              j * 0.7,
+              0,
+              Math.PI * 2
+            );
+            ctx.fillStyle = ctx.strokeStyle;
+            ctx.fill();
+          }
+        }
+      if (t.id === "backgroundReef")
+        for (let i = 0; i < 45; i++) {
+          ctx.strokeStyle = ["#526d7b", "#6f6a82", "#307278"][i % 3];
+          ctx.lineWidth = 6;
+          const x = i * 24, y = 470 - i % 4 * 18;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x, y - 45);
+          ctx.lineTo(x - 15, y - 65);
+          ctx.moveTo(x, y - 30);
+          ctx.lineTo(x + 19, y - 52);
+          ctx.stroke();
+        }
+      tex = new CanvasTexture(c);
+      tex.encoding = sRGBEncoding;
+      textures.set(t.id, tex);
+    }
+    const panel = new Mesh(
+      new PlaneGeometry(spec.width, spec.height),
+      new MeshBasicMaterial({
+        map: tex || null,
+        color: tex ? 16777215 : 1197404,
+        side: DoubleSide
+      })
+    );
+    panel.position.set(0, 0, -spec.depth / 2 - 8e-3);
+    panel.userData = { isEnv: true, type: "background", backgroundId: t.id };
+    return panel;
+  }
+
   // js/graphics/PhysicalEnvironment.js
   var labels = /* @__PURE__ */ new Map();
   var mat = (color, extra = {}) => new MeshStandardMaterial({ color, roughness: 0.65, ...extra });
-  function mesh(parent, geometry, material2, p = [0, 0, 0]) {
-    const object = new Mesh(geometry, material2);
+  function mesh(parent, geometry, material3, p = [0, 0, 0]) {
+    const object = new Mesh(geometry, material3);
     object.position.set(...p);
     object.castShadow = true;
     object.receiveShadow = true;
@@ -31883,7 +32322,7 @@
     geo.rotateX(-Math.PI / 2);
     return geo;
   }
-  function glassWalls(spec, material2) {
+  function glassWalls(spec, material3) {
     const points = tankOutline(spec), positions = [], indices = [];
     for (const p of points)
       positions.push(p.x, -spec.height / 2, p.z, p.x, spec.height / 2, p.z);
@@ -31898,7 +32337,7 @@
     );
     geo.setIndex(indices);
     geo.computeVertexNormals();
-    return new Mesh(geo, material2);
+    return new Mesh(geo, material3);
   }
   function equipment(parent, state, s, floor) {
     const eq = state.equipment, w = s.width, h = s.height, d = s.depth;
@@ -32298,12 +32737,12 @@
         placementSurface: true
       };
     }
-    if (eq.liveRock > 0) {
+    if (eq.liveRock > 0 || state.placedItems?.some((item) => item.kind === "rock")) {
       const rocks = new Group();
       rocks.userData = { isEnv: true, type: "rocks" };
       group.add(rocks);
       state.placedItems ||= [];
-      if (!state.aquascapeInitialized) {
+      if (eq.liveRock > 0 && !state.aquascapeInitialized) {
         if (!state.placedItems.some((i) => i.kind === "rock"))
           state.placedItems.push(...defaultRockPlacements(spec, surface));
         state.aquascapeInitialized = true;
@@ -32313,6 +32752,33 @@
           0.025,
           Math.min(0.5, Number(item.size) || 0.12)
         );
+        const decoration = createDecor(item);
+        if (decoration) {
+          decoration.position.set(
+            item.position.x,
+            item.position.y,
+            item.position.z
+          );
+          decoration.quaternion.setFromUnitVectors(
+            new Vector3(0, 1, 0),
+            new Vector3(
+              item.normal?.x || 0,
+              item.normal?.y ?? 1,
+              item.normal?.z || 0
+            ).normalize()
+          );
+          decoration.rotateY(item.rotation || 0);
+          decoration.userData = {
+            isEnv: true,
+            type: "rock",
+            placementSurface: true,
+            placedItemId: item.id,
+            id: item.id,
+            diameterMeters: size
+          };
+          rocks.add(decoration);
+          continue;
+        }
         const geo = new DodecahedronGeometry(size / 2, 2);
         geo.scale(1, 0.8, 0.78);
         geo.computeBoundingBox();
@@ -32349,6 +32815,8 @@
         };
       }
     }
+    const backdrop = createBackground(state, spec);
+    if (backdrop) group.add(backdrop);
     equipment(group, state, spec, surface);
     group.updateMatrixWorld(true);
     return group;
@@ -32361,6 +32829,7 @@
       const signature = JSON.stringify([
         getTankSpec(state),
         state.equipment,
+        state.activeBackground,
         (state.placedItems || []).filter((item) => item.kind === "rock"),
         Boolean(state.aquascapeInitialized),
         state.cycleComplete
@@ -32377,6 +32846,7 @@
       scene.userData.tankEnvironmentSignature = JSON.stringify([
         getTankSpec(state),
         state.equipment,
+        state.activeBackground,
         (state.placedItems || []).filter((item) => item.kind === "rock"),
         Boolean(state.aquascapeInitialized),
         state.cycleComplete
@@ -32391,12 +32861,12 @@
       group.traverse((object) => {
         if (object.geometry) geometries.add(object.geometry);
         if (object.material) {
-          for (const material2 of Array.isArray(object.material) ? object.material : [object.material])
-            materials.add(material2);
+          for (const material3 of Array.isArray(object.material) ? object.material : [object.material])
+            materials.add(material3);
         }
       });
       geometries.forEach((geometry) => geometry.dispose());
-      materials.forEach((material2) => material2.dispose());
+      materials.forEach((material3) => material3.dispose());
     }
   };
 
@@ -32483,6 +32953,21 @@
       x = Math.sin(t * 0.18) * spec.width * 0.28 + Math.sin(phase) * length * 1.8;
       z = Math.cos(t * 0.18) * spec.depth * 0.22 + Math.cos(phase) * length * 1.8;
       y = floor + spec.height * 0.7 + Math.sin(phase * 2) * length;
+    }
+    if (fish2.templateId === "clownfish") {
+      const hosts = (state?.corals || []).filter(
+        (c) => c.templateId === "bubbleTipAnemone" && c.alive !== false && c.health > 0
+      );
+      const host = hosts[Math.floor(seed * hosts.length)];
+      const placed = host && state?.placedItems?.find((i) => i.livestockId === host.id);
+      if (placed && host.placementStatus !== "needs-placement") {
+        const radius = (host.diameterM || 0.07) * 0.5;
+        x = placed.position.x + Math.sin(a) * radius * 0.65;
+        z = placed.position.z + Math.cos(a) * radius * 0.65;
+        y = placed.position.y + radius * 0.9 + length * 0.3;
+        speed = length * 0.45;
+        behavior = "hosting";
+      }
     }
     const food = foodTarget(fish2, state);
     if (food) {
@@ -32578,6 +33063,8 @@
     if (distance > 1e-5)
       mesh2.position.addScaledVector(direction, step / distance);
     for (const coral of context.coralMeshes?.values() || []) {
+      if (fish2.templateId === "clownfish" && target.behavior === "hosting" && (coral.userData.speciesId === "bubbleTipAnemone" || coral.userData.templateId === "bubbleTipAnemone"))
+        continue;
       const box2 = coralObstacle(coral).clone().expandByScalar(length * 0.25);
       if (!box2.containsPoint(mesh2.position)) continue;
       const choices = [
@@ -32824,7 +33311,20 @@
         const u = x / 511;
         let rgb = (palettes[id] || palettes.clownfish).slice();
         const black = [17, 22, 29], white = [243, 242, 223];
-        if (id === "lyretailAnthias") {
+        if (id === "valentiniPuffer") {
+          rgb = [226, 218, 184];
+          if (height > -0.1 && Math.min(
+            Math.abs(u - 0.23),
+            Math.abs(u - 0.48),
+            Math.abs(u - 0.72)
+          ) < 0.065)
+            rgb = black;
+          if (height < 0.25 && Math.sin(u * 145) * Math.cos(angle * 29) > 0.8)
+            rgb = [106, 74, 39];
+        } else if (id === "orchidDottyback") {
+          rgb = [179, 48, 201];
+          if (u > 0.76 && Math.abs(height - 0.3) < 0.09) rgb = black;
+        } else if (id === "lyretailAnthias") {
           if (u > 0.77 && Math.abs(height + 0.2) < 0.08)
             rgb = [167, 65, 167];
           if (height > 0.5) rgb = [233, 75, 130];
@@ -32917,6 +33417,24 @@
 
   // js/graphics/FishModels.js
   var FISH_PROFILES = {
+    valentiniPuffer: {
+      length: 0.55,
+      height: 0.14,
+      width: 0.13,
+      color: 14932132,
+      fin: 15386428,
+      tail: "round",
+      frequency: 3.8
+    },
+    orchidDottyback: {
+      length: 0.58,
+      height: 0.075,
+      width: 0.045,
+      color: 11549639,
+      fin: 11950803,
+      tail: "round",
+      frequency: 2.5
+    },
     lyretailAnthias: {
       length: 0.61,
       height: 0.115,
@@ -33154,8 +33672,8 @@
     }
     return group;
   }
-  function sphere(group, material2, position, scale) {
-    const mesh2 = new Mesh(new SphereGeometry(1, 16, 12), material2);
+  function sphere(group, material3, position, scale) {
+    const mesh2 = new Mesh(new SphereGeometry(1, 16, 12), material3);
     mesh2.position.set(...position);
     mesh2.scale.set(...scale);
     group.add(mesh2);
@@ -33317,6 +33835,10 @@
       cardinal ? 15658734 : p.color,
       cardinal
     );
+    if (resolvedId === "valentiniPuffer") {
+      dorsal.scale.set(0.45, 0.45, 1);
+      dorsal.position.x = -L * 0.22;
+    }
     group.add(dorsal);
     const anal = fin(
       [
@@ -33329,6 +33851,10 @@
       p.color,
       cardinal
     );
+    if (resolvedId === "valentiniPuffer") {
+      anal.scale.set(0.45, 0.45, 1);
+      anal.position.x = -L * 0.22;
+    }
     group.add(anal);
     let sail = null;
     if (resolvedId === "firefishGoby") {
@@ -33373,7 +33899,7 @@
       );
       pelvic.position.set(L * 0.13, -H * 0.65, side * p.width * 0.35);
       pelvic.rotation.y = side * 0.28;
-      group.add(pelvic);
+      if (resolvedId !== "valentiniPuffer") group.add(pelvic);
     }
     if (tang)
       for (const side of [-1, 1])
@@ -33793,12 +34319,12 @@
       const _morphA2 = new Vector3();
       const _morphB2 = new Vector3();
       const _morphC2 = new Vector3();
-      function _calculateMorphedAttributeData(object2, material3, attribute, morphAttribute, morphTargetsRelative2, a2, b2, c2, modifiedAttributeArray) {
+      function _calculateMorphedAttributeData(object2, material4, attribute, morphAttribute, morphTargetsRelative2, a2, b2, c2, modifiedAttributeArray) {
         _vA2.fromBufferAttribute(attribute, a2);
         _vB2.fromBufferAttribute(attribute, b2);
         _vC2.fromBufferAttribute(attribute, c2);
         const morphInfluences = object2.morphTargetInfluences;
-        if (material3.morphTargets && morphAttribute && morphInfluences) {
+        if (material4.morphTargets && morphAttribute && morphInfluences) {
           _morphA2.set(0, 0, 0);
           _morphB2.set(0, 0, 0);
           _morphC2.set(0, 0, 0);
@@ -33839,7 +34365,7 @@
         modifiedAttributeArray[c2 * 3 + 2] = _vC2.z;
       }
       const geometry = object.geometry;
-      const material2 = object.material;
+      const material3 = object.material;
       let a, b, c;
       const index = geometry.index;
       const positionAttribute = geometry.attributes.position;
@@ -33855,10 +34381,10 @@
       const modifiedPosition = new Float32Array(positionAttribute.count * positionAttribute.itemSize);
       const modifiedNormal = new Float32Array(normalAttribute.count * normalAttribute.itemSize);
       if (index !== null) {
-        if (Array.isArray(material2)) {
+        if (Array.isArray(material3)) {
           for (i = 0, il = groups.length; i < il; i++) {
             group = groups[i];
-            groupMaterial = material2[group.materialIndex];
+            groupMaterial = material3[group.materialIndex];
             start = Math.max(group.start, drawRange.start);
             end = Math.min(group.start + group.count, drawRange.start + drawRange.count);
             for (j = start, jl = end; j < jl; j += 3) {
@@ -33898,7 +34424,7 @@
             c = index.getX(i + 2);
             _calculateMorphedAttributeData(
               object,
-              material2,
+              material3,
               positionAttribute,
               morphPosition,
               morphTargetsRelative,
@@ -33909,7 +34435,7 @@
             );
             _calculateMorphedAttributeData(
               object,
-              material2,
+              material3,
               normalAttribute,
               morphNormal,
               morphTargetsRelative,
@@ -33921,10 +34447,10 @@
           }
         }
       } else if (positionAttribute !== void 0) {
-        if (Array.isArray(material2)) {
+        if (Array.isArray(material3)) {
           for (i = 0, il = groups.length; i < il; i++) {
             group = groups[i];
-            groupMaterial = material2[group.materialIndex];
+            groupMaterial = material3[group.materialIndex];
             start = Math.max(group.start, drawRange.start);
             end = Math.min(group.start + group.count, drawRange.start + drawRange.count);
             for (j = start, jl = end; j < jl; j += 3) {
@@ -33964,7 +34490,7 @@
             c = i + 2;
             _calculateMorphedAttributeData(
               object,
-              material2,
+              material3,
               positionAttribute,
               morphPosition,
               morphTargetsRelative,
@@ -33975,7 +34501,7 @@
             );
             _calculateMorphedAttributeData(
               object,
-              material2,
+              material3,
               normalAttribute,
               morphNormal,
               morphTargetsRelative,
@@ -34001,6 +34527,7 @@
   // js/graphics/CoralModels.js
   var mergeBufferGeometries = BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
   var IDS = /* @__PURE__ */ new Set([
+    "bubbleTipAnemone",
     "toadstoolLeather",
     "candyCaneCoral",
     "zoanthids",
@@ -34019,7 +34546,7 @@
     return v2 - Math.floor(v2);
   };
   var vec = (x, y, z) => new Vector3(x, y, z);
-  function material(color, glow = 0) {
+  function material2(color, glow = 0) {
     return new MeshPhysicalMaterial({
       color: new Color(color).convertSRGBToLinear(),
       roughness: 0.46,
@@ -34101,12 +34628,62 @@
     root.userData = { modelKind: "coral", speciesId: id, motions: [] };
     const rock = new Mesh(
       new IcosahedronGeometry(0.28, 1),
-      material(6641257)
+      material2(6641257)
     );
     rock.scale.set(1.35, 0.26, 1);
     rock.position.y = 0.025;
     root.add(rock);
-    if (["acropora", "birdsnest"].includes(id)) {
+    if (id === "bubbleTipAnemone") {
+      const column = new Mesh(
+        new CylinderGeometry(0.19, 0.12, 0.18, 24),
+        material2(9522264)
+      );
+      column.position.y = 0.12;
+      root.add(column);
+      const oral = new Mesh(
+        new SphereGeometry(0.29, 32, 16),
+        material2(12020599)
+      );
+      oral.scale.y = 0.2;
+      oral.position.y = 0.22;
+      root.add(oral);
+      const mouth = new Mesh(
+        new SphereGeometry(0.04, 16, 8),
+        material2(6633548)
+      );
+      mouth.scale.set(1, 0.18, 0.45);
+      mouth.position.y = 0.28;
+      root.add(mouth);
+      for (let i = 0; i < 64; i++) {
+        const a = i * 2.39996, r = 0.12 + 0.15 * Math.sqrt(i / 64), h = 0.18 + 0.08 * rand(i + 4);
+        const crown = new Group();
+        crown.position.set(Math.cos(a) * r, 0.24, Math.sin(a) * r);
+        const end = vec(Math.cos(a) * 0.06, h, Math.sin(a) * 0.06);
+        const curve = new QuadraticBezierCurve3(
+          vec(0, 0, 0),
+          vec(-0.02, h * 0.6, 0.01),
+          end
+        );
+        crown.add(
+          new Mesh(
+            new TubeGeometry(curve, 8, 0.014, 6, false),
+            material2(12018551, 0.035)
+          )
+        );
+        crown.add(
+          new Mesh(
+            bead(end.x, end.y, end.z, 0.033, [1, 1.3, 1]),
+            material2(15246494, 0.07)
+          )
+        );
+        root.add(crown);
+        root.userData.motions.push({
+          group: crown,
+          phase: i * 1.7,
+          kind: "lps"
+        });
+      }
+    } else if (["acropora", "birdsnest"].includes(id)) {
       const fine = id === "birdsnest";
       const branches = [], tips = [], pores = [];
       const branch = (a, b, radius, depth, seed) => {
@@ -34160,11 +34737,11 @@
           i + 1
         );
       }
-      batch(root, branches, material(fine ? 15308992 : 3518397));
-      batch(root, tips, material(fine ? 16767964 : 12053759, 0.12));
-      batch(root, pores, material(fine ? 8533853 : 2517911));
+      batch(root, branches, material2(fine ? 15308992 : 3518397));
+      batch(root, tips, material2(fine ? 16767964 : 12053759, 0.12));
+      batch(root, pores, material2(fine ? 8533853 : 2517911));
     } else if (id === "montipora") {
-      const mat3 = material(15104067, 0.035);
+      const mat3 = material2(15104067, 0.035);
       mat3.side = DoubleSide;
       mat3.vertexColors = true;
       for (let i = 0; i < 4; i++) {
@@ -34184,12 +34761,12 @@
       root.add(
         new Mesh(
           stem(vec(0, 0, 0), vec(0, 0.5, 0), 0.12, 0.09),
-          material(11967091)
+          material2(11967091)
         )
       );
       const cap = new Mesh(
         disk(0.42, 0.055, 8, 0.7),
-        material(12166278)
+        material2(12166278)
       );
       cap.position.y = 0.5;
       root.add(cap);
@@ -34200,7 +34777,7 @@
         polyps.push(stem(vec(x, y, z), vec(x, y + 0.06, z), 4e-3));
         polyps.push(bead(x, y + 0.065, z, 0.012));
       }
-      batch(root, polyps, material(12903853, 0.03));
+      batch(root, polyps, material2(12903853, 0.03));
     } else if (id === "candyCaneCoral") {
       const branches = [], heads = [], mouths = [];
       for (let i = 0; i < 7; i++) {
@@ -34214,9 +34791,9 @@
         mouths.push(disc);
         mouths.push(bead(x, y + 0.057, z, 0.018, [1, 0.2, 0.4]));
       }
-      batch(root, branches, material(9731947));
-      batch(root, heads, material(6462839));
-      const oral = material(8643762, 0.08);
+      batch(root, branches, material2(9731947));
+      batch(root, heads, material2(6462839));
+      const oral = material2(8643762, 0.08);
       oral.side = DoubleSide;
       mouths.forEach((geometry) => {
         geometry.deleteAttribute("uv");
@@ -34224,7 +34801,7 @@
       });
       batch(root, mouths, oral);
     } else if (id === "mushrooms") {
-      const mat3 = material(3911073, 0.05);
+      const mat3 = material2(3911073, 0.05);
       mat3.side = DoubleSide;
       mat3.vertexColors = true;
       for (let i = 0; i < 7; i++) {
@@ -34248,11 +34825,11 @@
             )
           );
         }
-        batch(polyp, bumps, material(9162924));
+        batch(polyp, bumps, material2(9162924));
         batch(
           polyp,
           [bead(0, 9e-3, 0, 0.023, [1, 0.35, 0.6])],
-          material(3165024)
+          material2(3165024)
         );
         root.add(polyp);
         root.userData.motions.push({
@@ -34265,15 +34842,15 @@
       const lps = ["hammerCoral", "torchCoral", "frogspawn"].includes(id);
       const xenia = id === "xeniaCorals", star = id === "greenStarPolyps";
       const count = lps ? 4 : xenia ? 9 : star ? 24 : 15;
-      const flesh = material(
+      const flesh = material2(
         lps ? 6397074 : xenia ? 14135766 : star ? 4307562 : 7229580,
         0.04
       );
-      const tipMat = material(
+      const tipMat = material2(
         lps ? 14218635 : xenia ? 16765155 : 10874465,
         0.15
       );
-      const mouths = material(16030514, 0.09);
+      const mouths = material2(16030514, 0.09);
       for (let i = 0; i < count; i++) {
         const a = i * 2.39996, rad = 0.28 * Math.sqrt(i / count);
         const p = new Group();
@@ -34361,7 +34938,7 @@
           batch(
             crown,
             [bead(0, 4e-3, 0, 9e-3, [1, 0.2, 1])],
-            material(4337256)
+            material2(4337256)
           );
         }
         root.add(p);
@@ -34567,11 +35144,11 @@
     mesh2.updateMatrixWorld(true);
     const vertex = new Vector3();
     let radius = 0;
-    mesh2.traverse((part) => {
-      const positions = part.geometry?.attributes.position;
+    mesh2.traverse((part2) => {
+      const positions = part2.geometry?.attributes.position;
       if (!positions) return;
       for (let i = 0; i < positions.count; i++) {
-        vertex.fromBufferAttribute(positions, i).applyMatrix4(part.matrixWorld);
+        vertex.fromBufferAttribute(positions, i).applyMatrix4(part2.matrixWorld);
         radius = Math.max(radius, Math.hypot(vertex.x, vertex.z));
       }
     });
@@ -34587,6 +35164,7 @@
   // js/graphics/InvertebrateModels.js
   var mergeBufferGeometries2 = BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
   var IDS2 = /* @__PURE__ */ new Set([
+    "serpentStar",
     "trochusSnail",
     "cerithSnail",
     "hermitCrab",
@@ -34608,18 +35186,18 @@
       depthWrite: !translucent
     });
   }
-  function sphere2(parent, material2, xyz, scale) {
-    const mesh2 = new Mesh(new SphereGeometry(1, 14, 10), material2);
+  function sphere2(parent, material3, xyz, scale) {
+    const mesh2 = new Mesh(new SphereGeometry(1, 14, 10), material3);
     mesh2.position.set(...xyz);
     mesh2.scale.set(...scale);
     parent.add(mesh2);
     return mesh2;
   }
-  function tube(parent, material2, points, radius, segments = 12) {
+  function tube(parent, material3, points, radius, segments = 12) {
     const curve = new CatmullRomCurve3(points.map((p) => v(...p)));
     const mesh2 = new Mesh(
       new TubeGeometry(curve, segments, radius, 6, false),
-      material2
+      material3
     );
     parent.add(mesh2);
     return mesh2;
@@ -34660,9 +35238,9 @@
     geo.setAttribute("color", new Float32BufferAttribute(colors, 3));
     geo.setIndex(indices);
     geo.computeVertexNormals();
-    const material2 = mat2(16777215);
-    material2.vertexColors = true;
-    const mesh2 = new Mesh(geo, material2);
+    const material3 = mat2(16777215);
+    material3.vertexColors = true;
+    const mesh2 = new Mesh(geo, material3);
     mesh2.position.set(-0.055, 0.055, 0);
     mesh2.userData.anatomicalPart = "shell";
     parent.add(mesh2);
@@ -34707,7 +35285,26 @@
       claws: []
     };
     const black = mat2(1055011), white = mat2(16773340);
-    if (id.includes("Snail")) {
+    if (id === "serpentStar") {
+      sphere2(root, mat2(10189160), [0, 0.035, 0], [0.1, 0.035, 0.1]);
+      const arms = [];
+      for (let arm = 0; arm < 5; arm++) {
+        const group = new Group();
+        group.rotation.y = arm * Math.PI * 2 / 5;
+        for (let k = 0; k < 17; k++) {
+          const x = 0.07 + k * 0.022, z = Math.sin(k * 0.22) * 0.04, r = 0.022 * (1 - k / 20);
+          sphere2(
+            group,
+            mat2(k % 2 ? 4800056 : 13019782),
+            [x, 0.025, z],
+            [0.016, r, r]
+          );
+        }
+        root.add(group);
+        arms.push(group);
+      }
+      root.userData.starArms = arms;
+    } else if (id.includes("Snail")) {
       const nassarius = id === "nassariusSnail" || id === "cerithSnail";
       const flesh = mat2(nassarius ? 13022362 : 7834995);
       const foot = sphere2(
@@ -34977,6 +35574,9 @@
   }
   function animateInvertebrateModel(mesh2, animal, timeSeconds, delta = 1 / 60) {
     if (animal.alive === false) return;
+    (mesh2.userData.starArms || []).forEach((arm, i) => {
+      arm.rotation.y = i * Math.PI * 2 / 5 + Math.sin(timeSeconds * 0.7 + i) * 0.08;
+    });
     if (mesh2.userData.burrowGroup) {
       const target = -(mesh2.userData.burrowDepth || 0);
       mesh2.userData.burrowGroup.position.y += (target - mesh2.userData.burrowGroup.position.y) * (1 - Math.exp(-2 * Math.max(0, delta)));
@@ -35286,8 +35886,10 @@
       const targets = excludeId == null ? this.rocks : this.rocks.filter(
         (mesh2) => mesh2.userData.placedItemId !== excludeId
       );
-      const hit = this.ray.intersectObjects(targets, false)[0];
+      const hit = this.ray.intersectObjects(targets, true)[0];
       if (!hit || hit.point.y <= this.floorY) return floor;
+      let owner = hit.object;
+      while (owner && !owner.userData.placedItemId) owner = owner.parent;
       this.normalMatrix.getNormalMatrix(hit.object.matrixWorld);
       return {
         x,
@@ -35295,7 +35897,7 @@
         z,
         type: "rock",
         normal: hit.face.normal.clone().applyMatrix3(this.normalMatrix).normalize(),
-        surfaceId: hit.object.userData.placedItemId ?? null
+        surfaceId: owner?.userData.placedItemId ?? null
       };
     }
   };
@@ -35433,7 +36035,7 @@
         item = state.placedItems?.find(
           (entry) => entry.kind === "rock" && entry.id === selection.id
         );
-        if (!item || !(state.equipment.liveRock > 0)) return false;
+        if (!item) return false;
         if (state.placedItems.some((entry) => entry.supportId === item.id)) {
           this.status(
             "Move attached corals or supported rocks before moving this rock."
@@ -35460,8 +36062,8 @@
       });
       this.preview = mesh2.clone(true);
       this.preview.visible = true;
-      this.preview.traverse((part) => {
-        if (part.isMesh) part.material = this.previewMaterial;
+      this.preview.traverse((part2) => {
+        if (part2.isMesh) part2.material = this.previewMaterial;
       });
       this.preview.userData.isPlacementPreview = true;
       this.scene.add(this.preview);
@@ -35505,13 +36107,15 @@
       );
       const hit = this.ray.intersectObjects(surfaces, true)[0];
       if (hit) {
+        let owner = hit.object;
+        while (owner && !owner.userData.placedItemId) owner = owner.parent;
         const normal = hit.face.normal.clone().applyMatrix3(
           new Matrix3().getNormalMatrix(hit.object.matrixWorld)
         ).normalize();
         this.setPreview(
           hit.point,
           normal,
-          hit.object.userData.placedItemId ?? null
+          owner?.userData.placedItemId ?? null
         );
       } else {
         const point = this.ray.ray.intersectPlane(
@@ -36505,16 +37109,16 @@ void main() {
       this.updateHTML("realCostsPanel", html);
     }
     static renderStore(state, _callbacks) {
-      const storeSig = state.budget + "|" + Object.keys(state.equipment).map((k) => k + ":" + (state.equipment[k] ? 1 : 0)).join(",");
+      const storeSig = state.budget + ":" + (state.activeBackground || "") + "|" + Object.keys(state.equipment).map((k) => k + ":" + (state.equipment[k] ? 1 : 0)).join(",");
       if (storeSig === this._lastStoreSig) return;
       this._lastStoreSig = storeSig;
       let html = '<div class="store-category">\u2699\uFE0F Equipment Store</div>';
       EQUIPMENT_STORE.forEach((item) => {
-        const isOwned = state.equipment[item.id] || item.id === "saltMix" && state.equipment.saltMix > 100;
+        const isOwned = !item.stackable && Boolean(state.equipment[item.id]);
         const price = StoreService.getItemPrice(item, state.tankSize);
-        const displayPrice = isOwned ? '<span style="color:var(--text-secondary)">OWNED</span>' : "$" + price;
+        const displayPrice = isOwned ? item.category === "background" ? state.activeBackground === item.id ? "ACTIVE \xB7 HIDE" : "SELECT \xB7 FREE" : '<span style="color:var(--text-secondary)">OWNED</span>' : "$" + price;
         html += `
-            <div class="store-item ${isOwned ? "locked" : ""}" data-action="buy-equip" data-id="${item.id}">
+            <div class="store-item ${isOwned && item.category !== "background" ? "locked" : ""}" data-action="buy-equip" data-id="${item.id}">
                 <div class="store-item-top">
                     <div class="store-item-name">${item.icon} ${item.name}</div>
                     <div class="store-item-price">${displayPrice}</div>
@@ -36851,7 +37455,7 @@ void main() {
         return;
       }
       const item = EQUIPMENT_STORE.find((i) => i.id === itemId);
-      if (!item.stackable && itemId !== "substrate" && this.state.equipment[itemId]) {
+      if (!item.stackable && item.category !== "background" && itemId !== "substrate" && this.state.equipment[itemId]) {
         UIController.showToast("You already own this!", "warning");
         return;
       }
@@ -36859,7 +37463,20 @@ void main() {
       this.state.totalSpent += check.price;
       let journalText = `\u{1F4E6} Purchased ${item.name}`;
       let journalTip = item.desc;
-      if (itemId === "liveRock") {
+      if (item.category === "decor") {
+        const placed = planDecorPlacement(
+          this.state,
+          DECOR_CATALOG.find((t) => t.id === itemId)
+        );
+        placed.id = `decor-${Date.now()}-${this.state.nextDecorId = (this.state.nextDecorId || 0) + 1}`;
+        this.state.placedItems.push(placed);
+        this.state.equipment[itemId] = (this.state.equipment[itemId] || 0) + 1;
+        journalTip = "Aquarium-safe decorative replica; no biological filtration credit. Move it in the Aquascape editor.";
+      } else if (item.category === "background") {
+        this.state.equipment[itemId] = true;
+        this.state.activeBackground = this.state.activeBackground === itemId ? null : itemId;
+        journalText = this.state.activeBackground ? `\u{1F5BC}\uFE0F Selected background: ${item.name}` : "\u{1F5BC}\uFE0F Removed the visible background (still owned).";
+      } else if (itemId === "liveRock") {
         this.state.equipment.liveRock = (this.state.equipment.liveRock || 0) + 10;
         journalText = `\u{1FAA8} Added 10 lbs of live rock. Total: ${this.state.equipment.liveRock} lbs. (Recommended: ${Math.round(this.state.tankGallons * 1.25)} lbs)`;
         journalTip = `Live rock acts as your biological filter. The pores host nitrifying bacteria that process ammonia.`;

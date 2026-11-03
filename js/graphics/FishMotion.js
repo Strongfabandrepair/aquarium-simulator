@@ -130,6 +130,25 @@ export function fishTarget(
             Math.cos(phase) * length * 1.8;
         y = floor + spec.height * 0.7 + Math.sin(phase * 2) * length;
     }
+    if (fish.templateId === 'clownfish') {
+        const hosts = (state?.corals || []).filter(
+            (c) =>
+                c.templateId === 'bubbleTipAnemone' &&
+                c.alive !== false &&
+                c.health > 0
+        );
+        const host = hosts[Math.floor(seed * hosts.length)];
+        const placed =
+            host && state?.placedItems?.find((i) => i.livestockId === host.id);
+        if (placed && host.placementStatus !== 'needs-placement') {
+            const radius = (host.diameterM || 0.07) * 0.5;
+            x = placed.position.x + Math.sin(a) * radius * 0.65;
+            z = placed.position.z + Math.cos(a) * radius * 0.65;
+            y = placed.position.y + radius * 0.9 + length * 0.3;
+            speed = length * 0.45;
+            behavior = 'hosting';
+        }
+    }
     const food = foodTarget(fish, state);
     if (food) {
         x = food.x + Math.sin(phase) * length;
@@ -237,6 +256,13 @@ export function advanceFishMotion(mesh, fish, seconds, delta, context = {}) {
     if (distance > 0.00001)
         mesh.position.addScaledVector(direction, step / distance);
     for (const coral of context.coralMeshes?.values() || []) {
+        if (
+            fish.templateId === 'clownfish' &&
+            target.behavior === 'hosting' &&
+            (coral.userData.speciesId === 'bubbleTipAnemone' ||
+                coral.userData.templateId === 'bubbleTipAnemone')
+        )
+            continue;
         const box = coralObstacle(coral)
             .clone()
             .expandByScalar(length * 0.25);

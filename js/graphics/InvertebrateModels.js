@@ -4,6 +4,7 @@ const mergeBufferGeometries =
     BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
 
 const IDS = new Set([
+    'serpentStar',
     'trochusSnail',
     'cerithSnail',
     'hermitCrab',
@@ -136,7 +137,28 @@ export function createInvertebrateModel(animal, id = animal.templateId) {
     };
     const black = mat(0x101923),
         white = mat(0xfff0dc);
-    if (id.includes('Snail')) {
+    if (id === 'serpentStar') {
+        sphere(root, mat(0x9b7968), [0, 0.035, 0], [0.1, 0.035, 0.1]);
+        const arms = [];
+        for (let arm = 0; arm < 5; arm++) {
+            const group = new THREE.Group();
+            group.rotation.y = (arm * Math.PI * 2) / 5;
+            for (let k = 0; k < 17; k++) {
+                const x = 0.07 + k * 0.022,
+                    z = Math.sin(k * 0.22) * 0.04,
+                    r = 0.022 * (1 - k / 20);
+                sphere(
+                    group,
+                    mat(k % 2 ? 0x493e38 : 0xc6aa86),
+                    [x, 0.025, z],
+                    [0.016, r, r]
+                );
+            }
+            root.add(group);
+            arms.push(group);
+        }
+        root.userData.starArms = arms;
+    } else if (id.includes('Snail')) {
         const nassarius = id === 'nassariusSnail' || id === 'cerithSnail';
         const flesh = mat(nassarius ? 0xc6b49a : 0x778d73);
         const foot = sphere(
@@ -421,6 +443,10 @@ export function animateInvertebrateModel(
     delta = 1 / 60
 ) {
     if (animal.alive === false) return;
+    (mesh.userData.starArms || []).forEach((arm, i) => {
+        arm.rotation.y =
+            (i * Math.PI * 2) / 5 + Math.sin(timeSeconds * 0.7 + i) * 0.08;
+    });
     if (mesh.userData.burrowGroup) {
         const target = -(mesh.userData.burrowDepth || 0);
         mesh.userData.burrowGroup.position.y +=

@@ -98,8 +98,10 @@ export class Habitat {
                 : this.rocks.filter(
                       (mesh) => mesh.userData.placedItemId !== excludeId
                   );
-        const hit = this.ray.intersectObjects(targets, false)[0];
+        const hit = this.ray.intersectObjects(targets, true)[0];
         if (!hit || hit.point.y <= this.floorY) return floor;
+        let owner = hit.object;
+        while (owner && !owner.userData.placedItemId) owner = owner.parent;
         this.normalMatrix.getNormalMatrix(hit.object.matrixWorld);
         return {
             x,
@@ -110,7 +112,7 @@ export class Habitat {
                 .clone()
                 .applyMatrix3(this.normalMatrix)
                 .normalize(),
-            surfaceId: hit.object.userData.placedItemId ?? null
+            surfaceId: owner?.userData.placedItemId ?? null
         };
     }
 }

@@ -1,3 +1,5 @@
+November 3, 2026 expansion: see [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) for purchasable decor/backgrounds, the 37-entry species catalog, anemone hosting and visible bounded growth.
+
 # Observing a practice reef
 
 ReefSim now animates wildlife between chemistry ticks and places colonies against the rendered aquascape. Pausing freezes animal travel and local animation. The 1x/5x/20x controls accelerate husbandry time; swimming stays at an observable pace. A reloaded tank preserves livestock and colony placement but restarts animal animation paths.

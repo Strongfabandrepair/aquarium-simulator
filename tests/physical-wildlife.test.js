@@ -35,7 +35,7 @@ import {
 
 describe('physical species and locomotion', () => {
     it('provides finite juvenile/adult dimensions and working models for every new species', () => {
-        expect(Object.keys(SPECIES)).toHaveLength(33);
+        expect(Object.keys(SPECIES)).toHaveLength(37);
         for (const species of Object.values(SPECIES)) {
             expect(species.juvenileLengthM).toBeGreaterThan(0);
             expect(species.adultLengthM).toBeGreaterThan(

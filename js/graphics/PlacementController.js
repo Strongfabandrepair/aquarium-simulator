@@ -90,7 +90,7 @@ export class PlacementController {
             item = state.placedItems?.find(
                 (entry) => entry.kind === 'rock' && entry.id === selection.id
             );
-            if (!item || !(state.equipment.liveRock > 0)) return false;
+            if (!item) return false;
             if (
                 state.placedItems.some((entry) => entry.supportId === item.id)
             ) {
@@ -177,6 +177,8 @@ export class PlacementController {
         );
         const hit = this.ray.intersectObjects(surfaces, true)[0];
         if (hit) {
+            let owner = hit.object;
+            while (owner && !owner.userData.placedItemId) owner = owner.parent;
             const normal = hit.face.normal
                 .clone()
                 .applyMatrix3(
@@ -186,7 +188,7 @@ export class PlacementController {
             this.setPreview(
                 hit.point,
                 normal,
-                hit.object.userData.placedItemId ?? null
+                owner?.userData.placedItemId ?? null
             );
         } else {
             const point = this.ray.ray.intersectPlane(

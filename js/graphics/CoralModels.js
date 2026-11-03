@@ -4,6 +4,7 @@ const mergeBufferGeometries =
     BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
 
 const IDS = new Set([
+    'bubbleTipAnemone',
     'toadstoolLeather',
     'candyCaneCoral',
     'zoanthids',
@@ -120,7 +121,59 @@ export function createCoralModel(coral, id = coral.templateId) {
     rock.scale.set(1.35, 0.26, 1);
     rock.position.y = 0.025;
     root.add(rock);
-    if (['acropora', 'birdsnest'].includes(id)) {
+    if (id === 'bubbleTipAnemone') {
+        const column = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.19, 0.12, 0.18, 24),
+            material(0x914c58)
+        );
+        column.position.y = 0.12;
+        root.add(column);
+        const oral = new THREE.Mesh(
+            new THREE.SphereGeometry(0.29, 32, 16),
+            material(0xb76b77)
+        );
+        oral.scale.y = 0.2;
+        oral.position.y = 0.22;
+        root.add(oral);
+        const mouth = new THREE.Mesh(
+            new THREE.SphereGeometry(0.04, 16, 8),
+            material(0x65384c)
+        );
+        mouth.scale.set(1, 0.18, 0.45);
+        mouth.position.y = 0.28;
+        root.add(mouth);
+        for (let i = 0; i < 64; i++) {
+            const a = i * 2.39996,
+                r = 0.12 + 0.15 * Math.sqrt(i / 64),
+                h = 0.18 + 0.08 * rand(i + 4);
+            const crown = new THREE.Group();
+            crown.position.set(Math.cos(a) * r, 0.24, Math.sin(a) * r);
+            const end = vec(Math.cos(a) * 0.06, h, Math.sin(a) * 0.06);
+            const curve = new THREE.QuadraticBezierCurve3(
+                vec(0, 0, 0),
+                vec(-0.02, h * 0.6, 0.01),
+                end
+            );
+            crown.add(
+                new THREE.Mesh(
+                    new THREE.TubeGeometry(curve, 8, 0.014, 6, false),
+                    material(0xb76377, 0.035)
+                )
+            );
+            crown.add(
+                new THREE.Mesh(
+                    bead(end.x, end.y, end.z, 0.033, [1, 1.3, 1]),
+                    material(0xe8a49e, 0.07)
+                )
+            );
+            root.add(crown);
+            root.userData.motions.push({
+                group: crown,
+                phase: i * 1.7,
+                kind: 'lps'
+            });
+        }
+    } else if (['acropora', 'birdsnest'].includes(id)) {
         const fine = id === 'birdsnest';
         const branches = [],
             tips = [],

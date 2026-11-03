@@ -11,6 +11,7 @@ export class TankBuilder {
         const signature = JSON.stringify([
             getTankSpec(state),
             state.equipment,
+            state.activeBackground,
             (state.placedItems || []).filter((item) => item.kind === 'rock'),
             Boolean(state.aquascapeInitialized),
             state.cycleComplete
@@ -30,6 +31,7 @@ export class TankBuilder {
         scene.userData.tankEnvironmentSignature = JSON.stringify([
             getTankSpec(state),
             state.equipment,
+            state.activeBackground,
             (state.placedItems || []).filter((item) => item.kind === 'rock'),
             Boolean(state.aquascapeInitialized),
             state.cycleComplete

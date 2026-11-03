@@ -34,7 +34,7 @@ export function setupAquariumControls(engine) {
     });
     const tools = document.getElementById('aquascapeTools');
     if (!tools) return;
-    tools.innerHTML = `<p>Move purchased rocks and coral frags. Click a supported surface to commit; green is valid, red is blocked. Rotation snaps to 15°. Escape cancels.</p>
+    tools.innerHTML = `<p>Move purchased rocks, decorations and coral frags. Click a supported surface to commit; green is valid, red is blocked. Rotation snaps to 15°. Escape cancels.</p>
         <label><input id="placementEnabled" type="checkbox"> Edit placement</label>
         <label>Purchased item <select id="placementItem"><option value="">Select an item</option></select></label>
         <button id="placementBegin">Move selected</button>
@@ -60,7 +60,10 @@ export function setupAquariumControls(engine) {
         select.replaceChildren(new window.Option('Select an item', ''));
         rocks.forEach((item, i) =>
             select.add(
-                new window.Option(`Live rock ${i + 1}`, `rock:${item.id}`)
+                new window.Option(
+                    item.name || `Live rock ${i + 1}`,
+                    `rock:${item.id}`
+                )
             )
         );
         state.corals
@@ -98,14 +101,18 @@ export function setupAquariumControls(engine) {
     document
         .getElementById('placementCancel')
         .addEventListener('click', () => engine.renderer.placement?.cancel());
+    let lastPlacementSelection = null;
     engine.renderer.onPlacementStatus = (status) => {
+        const selectionId = status.selection?.id || null;
         document.getElementById('placementStatus').textContent =
             `${status.reason || ''}${status.selection ? ` Rotation: ${status.rotation || 0}°` : ''}`;
         if (engine.renderer.placement?.enabled) {
             enabled.checked = true;
-            document.getElementById('aquascapePanel').open = true;
+            if (selectionId && selectionId !== lastPlacementSelection)
+                document.getElementById('aquascapePanel').open = true;
             engine.renderer.controls.enabled = false;
         }
+        lastPlacementSelection = selectionId;
     };
     engine.renderer.onPlacementCommit = () => {
         engine.save();

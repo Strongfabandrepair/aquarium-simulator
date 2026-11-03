@@ -1,4 +1,12 @@
-November 3, 2026: [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) documents the current meter-scale tank generator, raycast aquascape editor, 33-species catalog, feeding/growth/mortality systems and verification. Earlier entries below describe previous versions.
+November 3, 2026: [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) documents the latest decor/backgrounds, 37-entry catalog, anemone hosting and visible growth expansion. Earlier entries below describe previous versions.
+
+## Decor and companions expansion — November 3, 2026
+
+Build and lint passed. **119 unit tests across 18 files and all 32 Chromium scenarios passed** in the final integrated run, with no failures. The new browser scenarios exercise six decor purchases, actual mouse-driven ship placement and rotation, backdrop purchase/free switching/hiding and reload, plus actual rendered fish/coral growth and saved size persistence. All 37 animal models render with finite geometry and no shader errors. Reviewed the lit decor scene and generated species gallery images.
+
+New unit coverage verifies decor bounds/full-tank rejection/no filtration credit, species models, five-arm star anatomy, anemone hosting eligibility and bounded visual maturation. Existing cycling, maintenance, four tank shapes, profiles, feeding/removal, coral placement, mobile layout and quiz checks remain green. Fixed the aquascape editor reopening on pointer movement, recursive prop surface picking, and old-save growth reconstruction/clamping.
+
+Growth and hosting remain illustrative. The new anemone and articulated serpent star add draw calls; dense scenes still need future LOD/instancing work. This verifies Chromium on the test machine, not every GPU or browser engine.
 
 ## Physical simulation upgrade — November 3, 2026
 

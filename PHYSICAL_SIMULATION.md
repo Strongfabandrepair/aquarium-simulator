@@ -1,3 +1,5 @@
+November 3, 2026 expansion: see [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) for purchasable decor/backgrounds, the 37-entry species catalog, anemone hosting and visible bounded growth.
+
 # ReefSim physical aquarium and husbandry modules
 
 ## Units and tank geometry
@@ -43,7 +45,7 @@ Default purchased rock placements are seeded once and persisted. Legacy coral co
 
 ## Data-driven species and behavior
 
-`SpeciesCatalog.js` contains 33 marine entries: **13 fish, 12 corals and 8 cleanup species**. Seven additions are lyretail anthias, blue-green chromis, yellow watchman goby, toadstool leather, candy cane coral, Trochus snail and Cerith snail. Each has a model, catalog card and physical metadata. Freshwater tetras are intentionally outside this saltwater catalog.
+`SpeciesCatalog.js` contains 37 marine entries: **15 fish, 13 coral/anemone entries and 9 cleanup species**. The latest additions are Saddle Valentini Puffer, Orchid Dottyback, Bubble-tip Anemone and Banded Serpent Star (see DECOR_AND_SPECIES.md). Earlier additions are lyretail anthias, blue-green chromis, yellow watchman goby, toadstool leather, candy cane coral, Trochus snail and Cerith snail. Each has a model, catalog card and physical metadata. Freshwater tetras are intentionally outside this saltwater catalog.
 
 `getSpecies(id)` supplies `adultLengthM`, `juvenileLengthM`, `growthDays`, `movement`, `diet`, and model family. `physicalSize(animal, kind)` resolves saved `lengthM` or coral `diameterM`. To add a species, add metadata and its store definition, provide recognizable model/texture details, and cover it in the model and movement tests.
 
@@ -63,7 +65,7 @@ Snapshots retain custom specs, placement transforms, food events, sizes, maturit
 
 Environment geometry rebuilds only when its signature changes. Habitat candidate surfaces, movement probes, model measurements and coral bounds are cached. Shadow resolution and device pixel ratio are capped. Detailed coral meshes remain expensive at high population counts; distance-based LOD and instancing are future work, and no universal FPS claim is made.
 
-Run `npm run build`, `npm run lint`, `npm test`, and `npm run test:ui -- --workers=2`. Tests cover four shapes, geometry/analytic volume agreement, confinement, surface raycasts, persistent edits, normal alignment, rotation snapping, cancel/invalid placement, all 33 factories, physical sizes, schooling, feeding, growth, death/removal and save/reload. Browser screenshots are generated under `artifacts/`.
+Run `npm run build`, `npm run lint`, `npm test`, and `npm run test:ui -- --workers=2`. Tests cover four shapes, geometry/analytic volume agreement, confinement, surface raycasts, persistent edits, normal alignment, rotation snapping, cancel/invalid placement, all 37 factories, physical sizes, schooling, feeding, growth, death/removal and save/reload. Browser screenshots are generated under `artifacts/`.
 
 ## References and learning limits
 

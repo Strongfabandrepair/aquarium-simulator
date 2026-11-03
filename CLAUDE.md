@@ -1,3 +1,5 @@
+November 3, 2026 expansion: see [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) for purchasable decor/backgrounds, the 37-entry species catalog, anemone hosting and visible bounded growth.
+
 November 3, 2026: [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) documents the current meter-scale tank generator, raycast aquascape editor, 33-species catalog, feeding/growth/mortality systems and verification. Earlier entries below describe previous versions.
 
 Current habitat and behavior update: see [HABITAT_GUIDE.md](HABITAT_GUIDE.md) for continuous swimming, supported coral placement, cleanup anatomy/foraging, species-care guidance, references and simulation limits. [SMOKE_TEST_REPORT.md](SMOKE_TEST_REPORT.md) records verification. Earlier plans and session entries below are historical.
