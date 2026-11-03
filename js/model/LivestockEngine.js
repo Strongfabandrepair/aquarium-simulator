@@ -243,21 +243,21 @@ export class LivestockEngine {
             if (w.dissolvedOxygen < 5.5) healthChange -= 0.8 * hoursPassed;
 
             // Starvation tracking
-            const daysUnfed = state.day - state.lastFed;
+            const daysUnfed = state.day - (fish.lastMealDay ?? state.lastFed);
             if (daysUnfed > 3)
                 healthChange -= (daysUnfed - 2) * 1.5 * hoursPassed;
-            else if (state.lastFed === state.day)
+            else if ((fish.lastMealDay ?? state.lastFed) === state.day)
                 healthChange += 0.18 * hoursPassed;
 
-            if (state.feedingsToday > 0 && state.lastFed === state.day)
+            if (state.feedingsToday > 0 && (fish.lastMealDay ?? state.lastFed) === state.day)
                 healthChange += 0.05 * hoursPassed;
             if (species === 'tailspotblenny' && state.algaeLevel > 20)
                 healthChange += 0.08 * hoursPassed;
             if (species === 'yellowtang' && state.algaeLevel > 25)
                 healthChange += 0.1 * hoursPassed;
-            if (species === 'clownfish' && state.feedingsToday > 0)
+            if (species === 'clownfish' && state.feedingsToday > 0 && (fish.lastMealDay ?? state.lastFed) === state.day)
                 healthChange += 0.04 * hoursPassed;
-            if (species === 'banggaicardinal' && state.feedingsToday > 0)
+            if (species === 'banggaicardinal' && state.feedingsToday > 0 && (fish.lastMealDay ?? state.lastFed) === state.day)
                 healthChange += 0.04 * hoursPassed;
             if (fish.health < 90 && healthChange > 0)
                 healthChange += 0.03 * hoursPassed;
@@ -279,6 +279,7 @@ export class LivestockEngine {
 
         // 2. Process Coral Health & Calcification
         state.corals.forEach((coral) => {
+            if (coral.alive === false || coral.health <= 0) return;
             const tmpl = CORAL_DATABASE.find((c) => c.id === coral.templateId);
             let healthChange = 0;
 
@@ -480,7 +481,7 @@ export class LivestockEngine {
         const tmpl = CLEANUP_DATABASE.find((c) => c.id === crewId);
         if (!tmpl) return null;
 
-        const existing = state.cleanupCrew.find((c) => c.templateId === crewId);
+        const existing = state.cleanupCrew.find((c) => c.templateId === crewId && c.alive !== false && c.health !== 0);
         if (existing) {
             existing.count += tmpl.count;
             return existing;

@@ -1206,3 +1206,16 @@ button, .btn, .speed-btn, .action-btn, .maint-btn {
     .glass-panel { max-height: 65vh; min-width: 0; overflow-y: auto; }
     .welcome-screen { align-items: flex-start; }
 }
+
+/* Physical tank setup and aquascape authoring */
+.custom-tank { margin: 16px 0; padding: 14px; border: 1px solid var(--panel-border); border-radius: 12px; }
+.custom-tank form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-top: 12px; }
+.custom-tank label { display: grid; gap: 4px; }
+.custom-tank p, .custom-tank output { grid-column: 1 / -1; font-size: .8rem; }
+.custom-tank button, .aquascape-panel button, .livestock-item button { background: #124552; color: #e4fbff; border: 1px solid #39818b; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+select, input[type=number] { color: var(--text-primary); background: var(--bg-dark,#091923); border: 1px solid var(--panel-border); border-radius: 5px; padding: 6px; max-width: 100%; }
+.aquascape-panel { position:absolute; left:12px; bottom:12px; z-index:12; width:min(360px,calc(100% - 24px)); padding:10px; background:rgba(6,20,31,.94); border:1px solid var(--panel-border); border-radius:10px; font-size:.8rem; max-height:45%; overflow:auto; }
+.aquascape-panel summary { cursor:pointer; color:var(--accent-cyan,#4bddd0); }
+.aquascape-panel label { display:block; margin:8px 0; }
+.aquascape-panel button { margin:3px 1px; }
+.aquascape-panel p { margin:8px 0; }

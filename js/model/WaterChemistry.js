@@ -114,6 +114,7 @@ export class WaterChemistry {
         // Cleanup crew algae consumption
         let algaeReduced = 0;
         state.cleanupCrew.forEach((crew) => {
+            if (crew.alive === false || crew.health === 0) return;
             // Use current species diets for older saves too; zero is intentional.
             const species = CLEANUP_DATABASE.find(
                 (c) => c.id === crew.templateId

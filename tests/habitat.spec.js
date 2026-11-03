@@ -129,14 +129,14 @@ test('populated reef swims between chemistry ticks, seats colonies and separates
         expect(
             Math.hypot(...a.map((v, i) => b[i] - v)),
             species
-        ).toBeGreaterThan(0.03);
+        ).toBeGreaterThan(0.004);
     }
     for (let i = 0; i < after.cleanup.length; i++) {
         for (const other of after.cleanup.slice(i + 1)) {
             const a = after.cleanup[i].p;
             expect(
                 Math.hypot(...a.map((v, k) => v - other.p[k]))
-            ).toBeGreaterThan(0.08);
+            ).toBeGreaterThan(0.008);
         }
     }
     await page.waitForTimeout(400);

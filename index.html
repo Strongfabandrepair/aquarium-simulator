@@ -26,7 +26,7 @@
                     <li>Mix saltwater to 35 ppt, then start the nitrogen cycle.</li>
                     <li>Test ammonia, nitrite, and nitrate daily until the cycle finishes.</li>
                     <li>Use the Ghost Feed option during cycling to supply ammonia without adding fish.</li>
-                    <li>Only add fish after ammonia and nitrite read 0 ppm and nitrate is present.</li>
+                    <li>Only add fish after the tank is cycled and ammonia and nitrite read 0 ppm. Nitrate may be removed by filtration.</li>
                 </ul>
             </div>
 
@@ -37,6 +37,7 @@
         <div id="welcomeProfileInfo" class="profile-note">Current profile: Guest</div>
             </div>
 
+            <details class="custom-tank"><summary>Design a custom tank</summary><form id="customTankForm"><label>Shape <select name="shape"><option value="rectangular">Rectangular</option><option value="cube">Cube</option><option value="cylinder">Cylinder</option><option value="bowfront">Bow-front</option></select></label><label>Width / diameter (cm) <input name="width" type="number" min="25" max="300" value="120" required></label><label>Height (cm) <input name="height" type="number" min="25" max="300" value="55" required></label><label>Depth (cm) <input name="depth" type="number" min="25" max="300" value="50" required></label><p>Cube uses equal sides; cylinder uses width as diameter. Water volume excludes 2.5 cm headspace; rock and sand displacement is not yet deducted.</p><output id="customTankVolume"></output><button type="submit">Start custom tank</button></form></details>
             <div class="tank-option" onclick="startGame('nano')">
                 <h3>Nano Reef (20 Gallons)</h3>
                 <p>A small, challenging setup. Parameters fluctuate quickly. Perfect for learning water chemistry
@@ -71,7 +72,7 @@
     <!-- Top Navigation -->
     <nav id="topNav" class="top-nav" style="display:none;">
         <div class="logo"><span>🌊</span> ReefSim <span
-                style="color:var(--text-secondary); font-size:0.8rem; letter-spacing:1px; margin-left:10px;">v2.0</span>
+                style="color:var(--text-secondary); font-size:0.8rem; letter-spacing:1px; margin-left:10px;">v3.0</span>
         </div>
         <div class="sim-controls">
             <div id="profileDisplay" class="profile-chip">Profile: Guest</div>
@@ -169,6 +170,7 @@
             <div class="tank-hud" id="tankHud">
                 <!-- Badges rendered by JS -->
             </div>
+            <details id="aquascapePanel" class="aquascape-panel"><summary>Aquascape editor</summary><div id="aquascapeTools"></div></details>
             <!-- ThreeJS Target -->
             <div id="tank3D"></div>
         </section>

@@ -1,295 +1,275 @@
-// Visual locomotion runs in real seconds, independently of chemistry time steps.
-// These are illustrative habitat tendencies, not a compatibility/territory model.
-import { Box3 } from 'three';
-const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
-const finite = (n, fallback) => (Number.isFinite(n) ? n : fallback);
-const smooth = (n) => n * n * (3 - 2 * n);
-
+import { Box3, Vector3 } from 'three';
+import { getSpecies, physicalSize } from '../model/SpeciesCatalog.js';
+import {
+    getTankSpec,
+    constrainPoint,
+    waterLevel,
+    containsPoint
+} from '../model/TankGeometry.js';
+const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 export function fishSeed(id) {
     let hash = 2166136261;
     for (const char of String(id ?? 0))
         hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
-    // Avalanche nearby numeric IDs: cohort neighbors must not share a trajectory.
     hash ^= hash >>> 16;
     hash = Math.imul(hash, 0x7feb352d);
     hash ^= hash >>> 15;
     return (hash >>> 0) / 4294967296;
 }
-
 const heightCaches = new WeakMap();
-const shelterCaches = new WeakMap();
-const coralBounds = new WeakMap();
-
-function shelterAnchor(habitat, seed) {
-    if (!habitat?.rockPoints?.length) return null;
-    let edges = shelterCaches.get(habitat);
-    if (!edges) {
-        // Front-facing ledges provide a visible retreat beside the actual reef.
-        const points = [...habitat.rockPoints].sort((a, b) => b.z - a.z);
-        edges = points.slice(0, Math.max(1, Math.ceil(points.length / 3)));
-        shelterCaches.set(habitat, edges);
-    }
-    return edges[Math.floor(seed * edges.length)];
-}
-
-function coralObstacle(mesh) {
-    const signature = `${mesh.position.x}:${mesh.position.y}:${mesh.position.z}:${mesh.scale.x}:${mesh.scale.y}:${mesh.scale.z}`;
-    let cached = coralBounds.get(mesh);
-    if (cached?.signature === signature) return cached;
-    mesh.updateMatrixWorld(true);
-    const bounds = new Box3().setFromObject(mesh);
-    if (bounds.isEmpty()) return null;
-    cached = {
-        signature,
-        x: (bounds.min.x + bounds.max.x) / 2,
-        z: (bounds.min.z + bounds.max.z) / 2,
-        minY: bounds.min.y - 0.12,
-        maxY: bounds.max.y + 0.15,
-        radius:
-            Math.max(
-                (bounds.max.x - bounds.min.x) / 2,
-                (bounds.max.z - bounds.min.z) / 2
-            ) + 0.18
-    };
-    coralBounds.set(mesh, cached);
-    return cached;
-}
-
-// Lazy, bounded heightfield avoids raycasting every animated fish every frame.
 export function habitatHeight(habitat, x, z) {
-    if (!habitat?.sample) return -1.32;
+    if (!habitat?.sample) return habitat?.floorY ?? -getTankSpec({}).height / 2;
     let cache = heightCaches.get(habitat);
     if (!cache) {
         cache = new Map();
         heightCaches.set(habitat, cache);
     }
-    const cell = 0.1;
-    const ix = Math.floor(clamp(finite(x, 0), -2.4, 2.4) / cell);
-    const iz = Math.floor(clamp(finite(z, 0), -1.2, 1.2) / cell);
-    let highest = finite(habitat.floorY, -1.32);
-    for (const gx of [ix, ix + 1]) {
-        for (const gz of [iz, iz + 1]) {
-            const key = `${gx}:${gz}`;
-            if (!cache.has(key))
-                cache.set(
-                    key,
-                    finite(habitat.sample(gx * cell, gz * cell)?.y, highest)
-                );
-            highest = Math.max(highest, cache.get(key));
-        }
+    const cell = 0.012,
+        ix = Math.round(x / cell),
+        iz = Math.round(z / cell),
+        key = ix + ':' + iz;
+    if (!cache.has(key)) {
+        if (cache.size > 8192) cache.clear();
+        cache.set(
+            key,
+            habitat.sample(ix * cell, iz * cell)?.y ?? habitat.floorY
+        );
     }
-    return highest;
+    return cache.get(key);
 }
-
+export function foodTarget(animal, state) {
+    const event = state?.feedingEvent;
+    if (!event?.position) return null;
+    const now =
+        (state.day || 0) * 24 + (state.hour || 0) + (state.minute || 0) / 60;
+    const age = now - event.timeHours,
+        diet = getSpecies(animal.templateId).diet;
+    if (age < 0 || age > 2 || event.remaining === 0) return null;
+    return event.diet === diet ||
+        diet === 'mixed' ||
+        (event.diet === 'mixed' && diet !== 'copepods')
+        ? event.position
+        : null;
+}
 export function fishTarget(
     fish,
     seconds,
-    surfaceHeight = () => -1.32,
-    habitat = null
+    surfaceHeight,
+    habitat = null,
+    state = null
 ) {
-    const species = String(fish.templateId).toLowerCase();
-    const seed = fishSeed(fish.id);
-    const phase = seed * Math.PI * 2;
-    const t = Math.max(0, finite(seconds, 0));
-    const homeX = (seed - 0.5) * 3.1;
-    const homeZ = 0.42 + Math.sin(phase * 3) * 0.38;
-    let x, y, z, speed, behavior;
-    if (species === 'yellowtang' || species === 'bluehippotang') {
-        const angle = t * 0.28 + phase;
-        x = Math.sin(angle) * 2.1;
-        z = Math.cos(angle) * 0.9;
-        y = 0.38 + Math.sin(angle * 1.6) * 0.23;
-        speed = 0.72;
-        behavior = 'cruising';
-    } else if (species === 'sixlinewrasse' || species === 'flameangel') {
-        const angle = t * (species === 'sixlinewrasse' ? 0.48 : 0.26) + phase;
-        x = Math.sin(angle) * 1.85;
-        z = Math.sin(angle * 0.73 + phase) * 0.82;
-        y = -0.35 + Math.cos(angle * 1.3) * 0.2;
-        speed = species === 'sixlinewrasse' ? 0.85 : 0.5;
-        behavior = species === 'sixlinewrasse' ? 'darting' : 'grazing';
-    } else if (species === 'mandaringoby') {
-        const angle = t * 0.11 + phase;
-        x = Math.sin(angle) * 1.75;
-        z = 0.55 + Math.sin(angle * 1.4) * 0.37;
-        y = -2;
-        speed = 0.22;
-        behavior = 'foraging';
-    } else if (species === 'tailspotblenny') {
-        // Remain on a perch, then make a short hop to a neighboring grazing spot.
-        const cycle = t / 9 + seed * 4;
-        const step = Math.floor(cycle);
-        const progress = smooth(clamp(((cycle % 1) - 0.7) / 0.3, 0, 1));
-        const a = phase + step * 0.9;
-        const b = a + 0.9;
+    const spec = habitat?.spec || getTankSpec(state || {}),
+        floor = habitat?.floorY ?? -spec.height / 2;
+    const sample = surfaceHeight || (() => floor),
+        p = getSpecies(fish.templateId),
+        length = physicalSize(fish);
+    const margin = Math.min(
+        length * 0.55,
+        Math.min(spec.width, spec.depth, spec.height) * 0.22
+    );
+    const seed = fishSeed(fish.id),
+        phase = seed * Math.PI * 2,
+        t = Math.max(0, seconds || 0),
+        a = t * 0.26 + phase;
+    const anchor =
+        habitat?.rockPoints?.[Math.floor(seed * habitat.rockPoints.length)];
+    let x = Math.sin(a) * (spec.width * 0.42 - margin),
+        z = Math.cos(a * 0.83) * (spec.depth * 0.38 - margin);
+    let y = floor + spec.height * 0.62 + Math.sin(a * 1.3) * spec.height * 0.1,
+        behavior = p.movement,
+        speed = length * 1.2;
+    if (
+        ['territorial', 'cave', 'hover', 'perch', 'bottom'].includes(p.movement)
+    ) {
+        const range = length * (p.movement === 'territorial' ? 2 : 1.2);
         x =
-            homeX * 0.7 +
-            0.4 * (Math.sin(a) * (1 - progress) + Math.sin(b) * progress);
+            (anchor?.x ?? (seed - 0.5) * spec.width * 0.6) +
+            Math.sin(a) * range;
+        z = (anchor?.z ?? spec.depth * 0.12) + Math.cos(a * 0.8) * range * 0.6;
+        y = (anchor?.y ?? floor) + length * (p.movement === 'hover' ? 2 : 0.65);
+        speed = length * 0.55;
+        if (['bottom', 'perch'].includes(p.movement)) {
+            y = sample(x, z) + length * 0.25;
+            if (p.movement === 'perch') {
+                const cycle = t / 9 + seed * 4,
+                    step = Math.floor(cycle),
+                    progress = Math.max(0, ((cycle % 1) - 0.7) / 0.3);
+                const f = progress * progress * (3 - 2 * progress);
+                const rocks = habitat?.rockPoints;
+                const home = anchor || {
+                    x: (seed - 0.5) * spec.width * 0.6,
+                    z: spec.depth * 0.12
+                };
+                const next =
+                    rocks?.length > 1
+                        ? rocks[
+                              (Math.floor(seed * rocks.length) + 1) %
+                                  rocks.length
+                          ]
+                        : { x: home.x + length * 2, z: home.z };
+                const fraction = step % 2 ? 1 - f : f;
+                x = home.x + (next.x - home.x) * fraction;
+                z = home.z + (next.z - home.z) * fraction;
+                y = sample(x, z) + length * 0.3;
+                if (progress === 0) {
+                    speed *= 0.12;
+                    behavior = 'perching';
+                } else behavior = 'grazing';
+            }
+        }
+    } else if (p.movement === 'weave') {
+        z = Math.sin(a * 1.8) * spec.depth * 0.35;
+        y = floor + spec.height * 0.4 + Math.cos(a * 2.1) * spec.height * 0.12;
+        speed = length * 1.8;
+    } else if (p.movement === 'school') {
+        x =
+            Math.sin(t * 0.18) * spec.width * 0.28 +
+            Math.sin(phase) * length * 1.8;
         z =
-            0.12 +
-            0.3 * (Math.cos(a) * (1 - progress) + Math.cos(b) * progress);
-        // Prefer real rock ledges when the aquascape supplies them.
-        const points = habitat?.rockPoints;
-        if (points?.length) {
-            const anchor = points[Math.floor(seed * points.length)];
-            let neighbor = anchor;
-            let best = Infinity;
-            for (const point of points) {
-                const distance = Math.hypot(
-                    point.x - anchor.x,
-                    point.z - anchor.z
-                );
-                if (distance > 0.25 && distance < best) {
-                    best = distance;
-                    neighbor = point;
-                }
-            }
-            const fraction = step % 2 ? 1 - progress : progress;
-            x = anchor.x + (neighbor.x - anchor.x) * fraction;
-            z = anchor.z + (neighbor.z - anchor.z) * fraction;
-        }
-        y = -2;
-        speed = progress > 0 ? 0.5 : 0.16;
-        behavior = progress > 0 ? 'grazing' : 'perching';
-    } else {
-        // Hovering species still make station-keeping excursions around shelter.
-        const radius =
-            species === 'clownfish'
-                ? 0.36
-                : species === 'banggaicardinal'
-                  ? 0.22
-                  : 0.3;
-        const angle = t * 0.55 + phase;
-        x = homeX + Math.sin(angle) * radius;
-        z = homeZ + Math.cos(angle * 0.8) * radius * 0.55;
-        y =
-            species === 'firefishgoby'
-                ? -0.62
-                : species === 'royalgramma'
-                  ? -0.48
-                  : -0.05;
-        y += Math.sin(angle * 0.75) * 0.08;
-        if (species === 'royalgramma' || species === 'firefishgoby') {
-            const anchor = shelterAnchor(habitat, seed);
-            if (anchor) {
-                x = anchor.x + Math.sin(angle) * 0.2;
-                z = anchor.z + 0.18 + Math.cos(angle * 0.8) * 0.12;
-                y =
-                    anchor.y +
-                    (species === 'firefishgoby' ? 0.36 : 0.22) +
-                    Math.sin(angle * 0.75) * 0.06;
-            }
-        }
-        speed = species === 'banggaicardinal' ? 0.18 : 0.3;
-        behavior = 'hovering';
+            Math.cos(t * 0.18) * spec.depth * 0.22 +
+            Math.cos(phase) * length * 1.8;
+        y = floor + spec.height * 0.7 + Math.sin(phase * 2) * length;
     }
-    x = clamp(x, -2.3, 2.3);
-    z = clamp(z, -1.08, 1.08);
-    const bottomFish =
-        species === 'tailspotblenny' || species === 'mandaringoby';
-    const clearance = bottomFish ? 0.1 : 0.26;
-    const floor = finite(surfaceHeight(x, z), -1.32);
-    y = Math.max(y, floor + clearance);
-    return { x, y: clamp(y, -1.22, 1.08), z, speed, behavior, clearance };
+    const food = foodTarget(fish, state);
+    if (food) {
+        x = food.x + Math.sin(phase) * length;
+        z = food.z + Math.cos(phase) * length;
+        y = ['bottom', 'perch'].includes(p.movement)
+            ? sample(x, z) + length * 0.25
+            : food.y;
+        speed *= 1.65;
+        behavior = 'feeding';
+    }
+    const v = constrainPoint(spec, { x, y, z }, margin);
+    v.y = Math.min(
+        waterLevel(spec) - margin,
+        Math.max(
+            y,
+            -spec.height / 2 + length * 0.15,
+            sample(v.x, v.z) + length * 0.3
+        )
+    );
+    return { ...v, speed, behavior, clearance: length * 0.3 };
 }
-
+const obstacles = new WeakMap();
+function coralObstacle(mesh) {
+    const key = [
+        mesh.position.x,
+        mesh.position.y,
+        mesh.position.z,
+        mesh.scale.x,
+        mesh.rotation.y
+    ].join(':');
+    let cached = obstacles.get(mesh);
+    if (cached?.key !== key) {
+        cached = { key, box: new Box3().setFromObject(mesh) };
+        obstacles.set(mesh, cached);
+    }
+    return cached.box;
+}
 export function advanceFishMotion(mesh, fish, seconds, delta, context = {}) {
-    const dt = clamp(finite(delta, 0), 0, 0.1);
+    const dt = clamp(delta || 0, 0, 0.1);
     if (!dt || fish.alive === false) return;
-    const surfaceHeight =
+    const spec = context.habitat?.spec || getTankSpec(context.state || {});
+    const surface =
         context.surfaceHeight ||
         ((x, z) => habitatHeight(context.habitat, x, z));
-    const target = fishTarget(fish, seconds, surfaceHeight, context.habitat);
-    const position = mesh.position;
-    let dx = target.x - position.x;
-    let dy = target.y - position.y;
-    let dz = target.z - position.z;
-    // Avoid overlapping bodies without forcing loosely associated fish into schools.
+    const species = getSpecies(fish.templateId),
+        length = physicalSize(fish);
+    const margin = Math.min(
+        length * 0.55,
+        Math.min(spec.width, spec.depth, spec.height) * 0.22
+    );
+    const target = fishTarget(
+        fish,
+        seconds,
+        surface,
+        context.habitat,
+        context.state
+    );
+    const direction = new Vector3(target.x, target.y, target.z).sub(
+        mesh.position
+    );
+    const center = new Vector3(),
+        heading = new Vector3();
+    let count = 0;
     for (const other of context.fishMeshes?.values() || []) {
         if (other === mesh || other.userData.dead) continue;
-        let sx = position.x - other.position.x;
-        const sy = position.y - other.position.y;
-        let sz = position.z - other.position.z;
-        let distance = Math.hypot(sx, sy, sz);
-        if (distance < 0.65) {
-            if (distance < 0.001) {
-                const phase = fishSeed(fish.id) * Math.PI * 2;
-                sx = Math.cos(phase) * 0.01;
-                sz = Math.sin(phase) * 0.01;
-                distance = 0.01;
-            }
-            const repulsion = ((0.65 - distance) * 2.2) / distance;
-            dx += sx * repulsion;
-            dy += sy * repulsion;
-            dz += sz * repulsion;
+        const away = mesh.position.clone().sub(other.position),
+            d = away.length();
+        const radius =
+            (length + (other.userData.physicalLengthM || length)) * 0.65;
+        if (d < radius) {
+            if (d < 0.00001)
+                away.set(
+                    Math.cos(fishSeed(fish.id) * 6.28),
+                    0,
+                    Math.sin(fishSeed(fish.id) * 6.28)
+                ).multiplyScalar(0.001);
+            direction.addScaledVector(
+                away,
+                ((radius - d) * 3) / Math.max(0.001, away.length())
+            );
         }
-    }
-    const obstacles = [];
-    for (const colony of context.coralMeshes?.values() || []) {
-        const obstacle = coralObstacle(colony);
         if (
-            !obstacle ||
-            position.y < obstacle.minY ||
-            position.y > obstacle.maxY
-        )
-            continue;
-        obstacles.push(obstacle);
-        const sx = position.x - obstacle.x,
-            sz = position.z - obstacle.z;
-        const distance = Math.hypot(sx, sz);
-        if (distance > 0.0001 && distance < obstacle.radius + 0.25) {
-            const nx = sx / distance,
-                nz = sz / distance;
-            const inward = Math.min(0, dx * nx + dz * nz);
-            dx -= inward * nx;
-            dz -= inward * nz;
-            const turn = fishSeed(fish.id) > 0.5 ? 1 : -1;
-            const steering = (obstacle.radius + 0.25 - distance) * 1.8;
-            dx += (nx - nz * turn) * steering;
-            dz += (nz + nx * turn) * steering;
+            species.movement === 'school' &&
+            other.userData.templateId === fish.templateId &&
+            d < length * 10
+        ) {
+            center.add(other.position);
+            if (other.userData.velocity) heading.add(other.userData.velocity);
+            count++;
         }
     }
-    const distance = Math.hypot(dx, dy, dz);
-    const step = Math.min(
-        distance * (1 - Math.exp(-2.4 * dt)),
-        target.speed * dt
-    );
-    if (distance > 0.00001) {
-        position.x = clamp(position.x + (dx / distance) * step, -2.35, 2.35);
-        position.y = clamp(position.y + (dy / distance) * step, -1.22, 1.08);
-        position.z = clamp(position.z + (dz / distance) * step, -1.1, 1.1);
+    if (count) {
+        direction.addScaledVector(
+            center.multiplyScalar(1 / count).sub(mesh.position),
+            0.32
+        );
+        direction.addScaledVector(heading.multiplyScalar(1 / count), 0.35);
     }
-    // Resolve penetration sideways using measured colony bounds, preserving the
-    // animal's depth instead of lifting all species above the entire coral bed.
-    for (const obstacle of obstacles) {
-        if (position.y < obstacle.minY || position.y > obstacle.maxY) continue;
-        const sx = position.x - obstacle.x,
-            sz = position.z - obstacle.z;
-        if (Math.hypot(sx, sz) >= obstacle.radius) continue;
-        let best = null;
-        const angle = Math.atan2(sz, sx);
-        for (let i = 0; i < 16; i++) {
-            const a = angle + (i * Math.PI) / 8;
-            const x = obstacle.x + Math.cos(a) * obstacle.radius;
-            const z = obstacle.z + Math.sin(a) * obstacle.radius;
-            if (Math.abs(x) > 2.35 || Math.abs(z) > 1.1) continue;
-            const distance = Math.hypot(position.x - x, position.z - z);
-            if (!best || distance < best.distance) best = { x, z, distance };
-        }
-        if (best) {
-            position.x = best.x;
-            position.z = best.z;
-        }
+    const distance = direction.length(),
+        step = Math.min(
+            distance * (1 - Math.exp(-2.4 * dt)),
+            target.speed * dt
+        );
+    const before = mesh.position.clone();
+    if (distance > 0.00001)
+        mesh.position.addScaledVector(direction, step / distance);
+    for (const coral of context.coralMeshes?.values() || []) {
+        const box = coralObstacle(coral)
+            .clone()
+            .expandByScalar(length * 0.25);
+        if (!box.containsPoint(mesh.position)) continue;
+        const choices = [
+            { x: box.min.x - 0.001, y: mesh.position.y, z: mesh.position.z },
+            { x: box.max.x + 0.001, y: mesh.position.y, z: mesh.position.z },
+            { x: mesh.position.x, y: mesh.position.y, z: box.min.z - 0.001 },
+            { x: mesh.position.x, y: mesh.position.y, z: box.max.z + 0.001 }
+        ].filter((v) => containsPoint(spec, v.x, v.z, margin));
+        choices.sort(
+            (a, b) =>
+                Math.hypot(a.x - mesh.position.x, a.z - mesh.position.z) -
+                Math.hypot(b.x - mesh.position.x, b.z - mesh.position.z)
+        );
+        if (choices[0])
+            mesh.position.set(choices[0].x, choices[0].y, choices[0].z);
     }
-    // Query the actual rendered substrate/rock at the new position, not a guessed hill.
-    position.y = Math.max(
-        position.y,
+    const safe = constrainPoint(spec, mesh.position, margin);
+    mesh.position.set(
+        safe.x,
         Math.min(
-            1.08,
-            finite(surfaceHeight(position.x, position.z), -1.32) +
-                target.clearance
-        )
+            waterLevel(spec) - margin,
+            Math.max(
+                mesh.position.y,
+                -spec.height / 2 + length * 0.15,
+                surface(safe.x, safe.z) + target.clearance
+            )
+        ),
+        safe.z
     );
+    mesh.userData.velocity ||= new Vector3();
+    mesh.userData.velocity.copy(mesh.position).sub(before).divideScalar(dt);
+    mesh.userData.motionSpeed = mesh.userData.velocity.length();
     mesh.userData.behavior = target.behavior;
-    mesh.userData.motionSpeed = step / dt;
 }

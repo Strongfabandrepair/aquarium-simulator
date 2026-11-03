@@ -24,7 +24,7 @@ test('a cleanup-only tank can be fed and Nassarius emerge without repeated timer
                         ?.userData.burrowDepth
             )
         )
-        .toBe(0.15);
+        .toBe(0.1);
     await page.locator('#btnFeedFish').click();
     await expect
         .poll(() => page.evaluate(() => window.gameEngine.state.feedingsToday))

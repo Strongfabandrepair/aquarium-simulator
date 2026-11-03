@@ -6,14 +6,14 @@ import { LivestockRenderer } from '../js/graphics/LivestockRenderer.js';
 
 function aquascape(tankSize = 'medium') {
     const env = new THREE.Group();
-    const sand = new THREE.Mesh(new THREE.BoxGeometry(5.9, 0.2, 2.9));
-    sand.position.y = -1.38;
+    const sand = new THREE.Mesh(new THREE.BoxGeometry(1.22, 0.02, 0.33));
+    sand.position.y = -0.255;
     sand.userData.type = 'sand';
     env.add(sand);
     const rocks = new THREE.Group();
     rocks.userData.type = 'rocks';
-    const ledge = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.6, 1.1));
-    ledge.position.set(0, -0.95, -0.25);
+    const ledge = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.15));
+    ledge.position.set(0, -0.195, 0);
     rocks.add(ledge);
     env.add(rocks);
     return new Habitat(env, { tankSize });
@@ -53,12 +53,12 @@ function colonies(count) {
 describe('aquascape contacts and coral placement', () => {
     it('samples actual substrate/rock tops while ignoring equipment', () => {
         const habitat = aquascape();
-        expect(habitat.sample(0, 0).y).toBeCloseTo(-0.65);
+        expect(habitat.sample(0, 0).y).toBeCloseTo(-0.145);
         expect(habitat.sample(0, 0).type).toBe('rock');
-        expect(habitat.sample(2, 0).y).toBeCloseTo(-1.28);
+        expect(habitat.sample(2, 0).y).toBeCloseTo(-0.245);
         expect(habitat.sample(0, 0, { sandOnly: true }).type).toBe('sand');
         expect(habitat.sample(0, 0).normal.y).toBeCloseTo(1);
-        expect(new Habitat(null).sample(0, 0).y).toBe(-1.48);
+        expect(new Habitat(null).sample(0, 0).y).toBe(-0.265);
     });
 
     for (const [tankSize, count] of [
@@ -72,6 +72,10 @@ describe('aquascape contacts and coral placement', () => {
             syncCoralPlacements(corals, meshes, habitat);
             for (const coral of corals) {
                 const mesh = meshes.get(coral.id);
+                if (!mesh.visible) {
+                    expect(coral.placementStatus).toBe('needs-placement');
+                    continue;
+                }
                 const contact = habitat.sample(
                     mesh.position.x,
                     mesh.position.z
@@ -79,7 +83,7 @@ describe('aquascape contacts and coral placement', () => {
                 expect(
                     mesh.position.y -
                         mesh.userData.coralBaseOffset * mesh.scale.x
-                ).toBeCloseTo(contact.y - 0.012);
+                ).toBeCloseTo(contact.y - 0.001);
                 expect(
                     Math.abs(mesh.position.x) + mesh.userData.placementRadius
                 ).toBeLessThan(2.9);
@@ -87,7 +91,7 @@ describe('aquascape contacts and coral placement', () => {
                     Math.abs(mesh.position.z) + mesh.userData.placementRadius
                 ).toBeLessThan(1.4);
                 for (const other of meshes.values()) {
-                    if (other === mesh) continue;
+                    if (other === mesh || !other.visible) continue;
                     const distance = Math.hypot(
                         mesh.position.x - other.position.x,
                         mesh.position.z - other.position.z
@@ -117,7 +121,7 @@ describe('aquascape contacts and coral placement', () => {
         const bare = new Habitat(null);
         syncCoralPlacements(corals, meshes, bare);
         for (const mesh of meshes.values()) {
-            expect(mesh.userData.surfaceY).toBe(-1.48);
+            expect(mesh.userData.surfaceY).toBe(-0.265);
             expect(mesh.userData.habitat).toBe('bottom');
         }
     });

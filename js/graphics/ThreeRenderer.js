@@ -8,6 +8,14 @@ import { TankBuilder } from './TankBuilder.js';
 import { LivestockRenderer } from './LivestockRenderer.js';
 import { getHabitat } from './Habitat.js';
 import { syncCoralPlacements } from './CoralPlacement.js';
+import {
+    getTankSpec,
+    waterLevel,
+    constrainPoint
+} from '../model/TankGeometry.js';
+import { horizontalGeometry } from './PhysicalEnvironment.js';
+import { FeedingParticles } from './FeedingParticles.js';
+import { PlacementController } from './PlacementController.js';
 import TextureGenerator from './TextureGenerator.js';
 
 const WATER_VERT = `
@@ -17,8 +25,8 @@ varying vec3 vWorldPos;
 void main() {
     vUv = uv;
     vec3 p = position;
-    p.y += sin((p.x + uTime * 0.6) * 3.0) * 0.02;
-    p.y += cos((p.z + uTime * 0.4) * 4.0) * 0.015;
+    p.y += sin((p.x + uTime * 0.6) * 3.0) * 0.0015;
+    p.y += cos((p.z + uTime * 0.4) * 4.0) * 0.001;
     vec4 wp = modelMatrix * vec4(p, 1.0);
     vWorldPos = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
@@ -130,10 +138,24 @@ export class ThreeRenderer {
         this.controls.maxDistance = 15;
 
         // 5. Lights
-        const ambientLight = new THREE.AmbientLight(0x0a2a4a, 1.5);
+        const ambientLight = new THREE.AmbientLight(0xb6c9dc, 1.1);
         this.scene.add(ambientLight);
 
-        this.pointLight = new THREE.PointLight(0x00ffe1, 0, 10);
+        this.pointLight = new THREE.SpotLight(
+            0xffffff,
+            12,
+            5,
+            Math.PI / 3,
+            0.65,
+            2
+        );
+        this.pointLight.castShadow = true;
+        this.pointLight.shadow.mapSize.set(1024, 1024);
+        this.pointLight.shadow.bias = -0.0001;
+        this.pointLight.shadow.normalBias = 0.001;
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.physicallyCorrectLights = true;
         this.pointLight.position.set(0, 4, 0);
         this.scene.add(this.pointLight);
 
@@ -189,7 +211,7 @@ export class ThreeRenderer {
             bubblePos[i * 3] = (Math.random() - 0.5) * 4.4;
             bubblePos[i * 3 + 1] = -1.15 + Math.random() * 2.3;
             bubblePos[i * 3 + 2] = (Math.random() - 0.5) * 2.1;
-            this._bubbleSpeeds[i] = 0.01 + Math.random() * 0.02;
+            this._bubbleSpeeds[i] = 0.01 + Math.random() * 0.0015;
         }
         const bubbleAttr = new THREE.BufferAttribute(bubblePos, 3);
         bubbleAttr.setUsage(THREE.DynamicDrawUsage);
@@ -234,9 +256,74 @@ export class ThreeRenderer {
         this.renderer.setSize(width, height);
     }
 
+    updatePhysicalTank(state) {
+        const spec = getTankSpec(state);
+        const signature = JSON.stringify(spec);
+        if (this._tankSignature === signature) return;
+        this.placement?.cancel();
+        this._tankSignature = signature;
+        this.tankSpec = spec;
+        const span = Math.max(spec.width, spec.height, spec.depth);
+        this.camera.near = 0.005;
+        this.camera.far = span * 30;
+        this.camera.position.set(span * 0.12, spec.height * 0.65, span * 1.9);
+        this.camera.updateProjectionMatrix();
+        this.controls.target.set(0, -spec.height * 0.06, 0);
+        this.controls.minDistance = span * 0.45;
+        this.controls.maxDistance = span * 5;
+        this.pointLight.position.set(0, spec.height / 2 + span * 0.4, 0);
+        this.pointLight.distance = span * 5;
+        this.pointLight.shadow.camera.near = 0.01;
+        this.pointLight.shadow.camera.far = span * 5;
+        this.scene.fog.density = 0.06 / span;
+        this.waterMesh.geometry.dispose();
+        this.waterMesh.geometry = horizontalGeometry(spec);
+        this.waterMesh.position.y = waterLevel(spec);
+        this.lightShaft.scale.set(
+            spec.width / 5.8,
+            (spec.height - 0.025) / 2.8,
+            spec.depth / 5.8
+        );
+        this.lightShaft.position.set(0, -0.0125, 0);
+        this.bubbleParticles.material.size = 0.0025;
+        const positions =
+            this.bubbleParticles.geometry.attributes.position.array;
+        for (let i = 0; i < positions.length; i += 3) {
+            const point = constrainPoint(
+                spec,
+                {
+                    x: (Math.random() - 0.5) * spec.width,
+                    y: (Math.random() - 0.5) * spec.height,
+                    z: (Math.random() - 0.5) * spec.depth
+                },
+                0.015
+            );
+            positions.set([point.x, point.y, point.z], i);
+        }
+        this.bubbleParticles.geometry.attributes.position.needsUpdate = true;
+    }
+
     render(state) {
         if (!this.initialized) return;
 
+        if (this._state && this._state !== state) {
+            this.placement?.cancel();
+            for (const map of [
+                this.fishMeshes,
+                this.coralMeshes,
+                this.cleanupMeshes
+            ]) {
+                for (const mesh of map.values()) {
+                    this.scene.remove(mesh);
+                    TankBuilder.disposeGroup(mesh);
+                }
+                map.clear();
+            }
+            this._wildlifeTime = 0;
+            if (this.feedingParticles) this.feedingParticles.key = null;
+        }
+        this._state = state;
+        this.updatePhysicalTank(state);
         const now = performance.now();
         const delta = Math.min(
             (now - (this._lastFrameTime ?? now - 1000 / 60)) / 1000,
@@ -254,6 +341,17 @@ export class ThreeRenderer {
         // 1. Rebuild equipment & environment if updated
         TankBuilder.buildEnvironment(this.scene, state);
         const habitat = getHabitat(this.scene, state);
+        if (!this.placement)
+            this.placement = new PlacementController({
+                scene: this.scene,
+                camera: this.camera,
+                canvas: this.renderer.domElement,
+                getState: () => this._state,
+                getMeshes: () => ({ coralMeshes: this.coralMeshes }),
+                getHabitat: () => getHabitat(this.scene, this._state),
+                onCommit: (item) => this.onPlacementCommit?.(item),
+                onStatus: (status) => this.onPlacementStatus?.(status)
+            });
         this._wildlifeContext = {
             habitat,
             state,
@@ -269,7 +367,12 @@ export class ThreeRenderer {
             state.equipment.lightOn &&
             (state.equipment.lightBasic || state.equipment.lightReef);
         if (hasLight) {
-            this.pointLight.intensity = state.equipment.lightReef ? 2.5 : 1.5;
+            this.pointLight.intensity =
+                (state.equipment.lightReef ? 12 : 6) *
+                Math.max(
+                    0.3,
+                    (this.tankSpec.width * this.tankSpec.depth) / 0.4
+                );
             const colorHex = state.equipment.lightReef ? 0x6bcfff : 0xfff2cf;
             this.pointLight.color.setHex(colorHex);
             this.shaftUniforms.uColor.value.setHex(colorHex);
@@ -373,7 +476,7 @@ export class ThreeRenderer {
                     id,
                     cohortId: crew.id,
                     instanceIndex: index,
-                    alive: true
+                    alive: crew.alive !== false && crew.health !== 0
                 };
                 if (!mesh) {
                     mesh = LivestockRenderer.createCleanupMesh(
@@ -412,15 +515,28 @@ export class ThreeRenderer {
                 this.bubbleParticles.geometry.attributes.position.array;
             const t = now * 0.005;
             for (let i = 0, p = 0; i < positions.length; i += 3, p++) {
-                positions[i + 1] += this._bubbleSpeeds[p] * delta * 60;
-                positions[i] += Math.sin(t + p) * 0.006 * delta * 60;
-                if (positions[i + 1] > 1.15) positions[i + 1] = -1.15;
+                positions[i + 1] += this._bubbleSpeeds[p] * delta * 3;
+                const point = constrainPoint(
+                    this.tankSpec,
+                    {
+                        x: positions[i] + Math.sin(t + p) * 0.001 * delta,
+                        y: positions[i + 1],
+                        z: positions[i + 2]
+                    },
+                    0.005
+                );
+                positions[i] = point.x;
+                positions[i + 2] = point.z;
+                if (positions[i + 1] > waterLevel(this.tankSpec))
+                    positions[i + 1] = -this.tankSpec.height / 2 + 0.02;
             }
             this.bubbleParticles.geometry.attributes.position.needsUpdate = true;
         } else {
             this.bubbleParticles.visible = false;
         }
 
+        this.feedingParticles ||= new FeedingParticles(this.scene);
+        this.feedingParticles.update(state, wildlifeDelta);
         this.renderer.render(this.scene, this.camera);
     }
 }

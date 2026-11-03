@@ -2,6 +2,9 @@ import * as THREE from 'three';
 
 const cache = new Map();
 const palettes = {
+    lyretailAnthias: [239, 117, 63],
+    greenChromis: [58, 189, 180],
+    yellowWatchmanGoby: [242, 209, 35],
     clownfish: [247, 105, 13],
     royalGramma: [139, 35, 202],
     firefishGoby: [239, 228, 204],
@@ -31,7 +34,20 @@ export function fishTexture(id) {
             let rgb = (palettes[id] || palettes.clownfish).slice();
             const black = [17, 22, 29],
                 white = [243, 242, 223];
-            if (id === 'clownfish') {
+            if (id === 'lyretailAnthias') {
+                if (u > 0.77 && Math.abs(height + 0.2) < 0.08)
+                    rgb = [167, 65, 167];
+                if (height > 0.5) rgb = [233, 75, 130];
+            } else if (id === 'greenChromis') {
+                rgb = [
+                    50 + 30 * u,
+                    177 + 25 * Math.abs(side),
+                    174 + 38 * Math.abs(side)
+                ];
+            } else if (id === 'yellowWatchmanGoby') {
+                if (Math.sin(u * 109) * Math.cos(angle * 27) > 0.9)
+                    rgb = [61, 159, 222];
+            } else if (id === 'clownfish') {
                 const bend = 0.018 * Math.sin(angle * 2);
                 const d = Math.min(
                     Math.abs(u - 0.18 - bend),

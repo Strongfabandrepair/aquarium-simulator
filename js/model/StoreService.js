@@ -4,6 +4,8 @@
 
 import { TANK_CONFIGS } from '../engine/GameState.js';
 
+import { NEW_FISH, NEW_CORALS, NEW_CLEANUP } from './SpeciesCatalog.js';
+
 export const EQUIPMENT_STORE = [
     {
         id: 'tank',
@@ -656,6 +658,10 @@ export const CLEANUP_DATABASE = [
         algaeReduce: 0
     }
 ];
+
+FISH_DATABASE.push(...NEW_FISH);
+CORAL_DATABASE.push(...NEW_CORALS);
+CLEANUP_DATABASE.push(...NEW_CLEANUP);
 
 export const KNOWLEDGE_BASE = {
     nitrogenCycle: {

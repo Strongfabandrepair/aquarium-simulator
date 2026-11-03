@@ -8,7 +8,8 @@ import {
 import { LivestockRenderer } from '../js/graphics/LivestockRenderer.js';
 
 const fish = (templateId, id = 1) => ({ id, templateId, alive: true });
-const height = (x, z) => (Math.abs(x) < 1 && Math.abs(z) < 0.5 ? -0.3 : -1.32);
+const height = (x, z) =>
+    Math.abs(x) < 0.1 && Math.abs(z) < 0.05 ? -0.15 : -0.265;
 function run(animal, rate, seconds = 12) {
     const mesh = new THREE.Group();
     const start = fishTarget(animal, 0, height);
@@ -22,39 +23,39 @@ function run(animal, rate, seconds = 12) {
 
 describe('continuous species locomotion', () => {
     it('keeps shelter species near measured rock ledges', () => {
-        const habitat = { rockPoints: [{ x: -1, y: -0.5, z: 0.2 }] };
+        const habitat = { rockPoints: [{ x: -0.1, y: -0.15, z: 0.02 }] };
         for (const species of ['royalGramma', 'firefishGoby']) {
             for (let t = 0; t < 60; t += 0.5) {
                 const target = fishTarget(
                     fish(species),
                     t,
-                    () => -1.32,
+                    () => -0.265,
                     habitat
                 );
-                expect(Math.hypot(target.x + 1, target.z - 0.2)).toBeLessThan(
-                    0.37
-                );
-                expect(target.y).toBeGreaterThan(-0.5);
+                expect(
+                    Math.hypot(target.x + 0.1, target.z - 0.02)
+                ).toBeLessThan(0.06);
+                expect(target.y).toBeGreaterThan(-0.15);
                 expect(target.y).toBeLessThan(0);
             }
         }
     });
     it('routes around measured coral bodies without lifting bottom fish into open water', () => {
         const coral = new THREE.Mesh(
-            new THREE.BoxGeometry(0.6, 0.8, 0.6),
+            new THREE.BoxGeometry(0.06, 0.08, 0.06),
             new THREE.MeshBasicMaterial()
         );
-        coral.position.set(0, -0.9, 0.5);
+        coral.position.set(0, -0.225, 0.05);
         const mesh = new THREE.Group();
-        mesh.position.set(0, -1.2, 0.5);
+        mesh.position.set(0, -0.25, 0.05);
         for (let i = 1; i <= 600; i++) {
             advanceFishMotion(mesh, fish('mandarinGoby'), i / 60, 1 / 60, {
                 coralMeshes: new Map([[1, coral]])
             });
             expect(
-                Math.hypot(mesh.position.x, mesh.position.z - 0.5)
-            ).toBeGreaterThanOrEqual(0.47999);
-            expect(mesh.position.y).toBeLessThan(-1);
+                Math.hypot(mesh.position.x, mesh.position.z - 0.05)
+            ).toBeGreaterThanOrEqual(0.038);
+            expect(mesh.position.y).toBeLessThan(-0.2);
         }
     });
     it('caches surface raycasts within a habitat and resets for rebuilt environments', () => {
@@ -69,26 +70,26 @@ describe('continuous species locomotion', () => {
         const first = habitatHeight(habitat, 0.21, 0.31);
         for (let i = 0; i < 100; i++)
             expect(habitatHeight(habitat, 0.21, 0.31)).toBe(first);
-        expect(calls).toBe(4);
+        expect(calls).toBe(1);
         habitatHeight({ ...habitat }, 0.21, 0.31);
-        expect(calls).toBe(8);
+        expect(calls).toBe(2);
     });
     it('chooses actual rock ledges for blenny perches', () => {
         const habitat = {
             rockPoints: [
-                { x: -1, y: -0.4, z: 0 },
-                { x: -0.6, y: -0.3, z: 0 }
+                { x: -0.1, y: -0.14, z: 0 },
+                { x: -0.06, y: -0.13, z: 0 }
             ]
         };
         for (let t = 0; t < 40; t += 0.2) {
             const target = fishTarget(
                 fish('tailspotBlenny'),
                 t,
-                () => -0.4,
+                () => -0.14,
                 habitat
             );
-            expect(target.x).toBeGreaterThanOrEqual(-1);
-            expect(target.x).toBeLessThanOrEqual(-0.6);
+            expect(target.x).toBeGreaterThanOrEqual(-0.1);
+            expect(target.x).toBeLessThanOrEqual(-0.06);
             expect(target.z).toBe(0);
         }
     });
@@ -103,8 +104,8 @@ describe('continuous species locomotion', () => {
                 1 / 60,
                 {}
             );
-        expect(mesh.position.length()).toBeGreaterThan(0.4);
-        expect(mesh.userData.swimSpeed).toBeGreaterThan(0.1);
+        expect(mesh.position.length()).toBeGreaterThan(0.08);
+        expect(mesh.userData.swimSpeed).toBeGreaterThan(0.015);
         expect(animal.x).toBe(0.5);
     });
     it('freezes locomotion and orientation at pause', () => {
@@ -132,7 +133,10 @@ describe('continuous species locomotion', () => {
         for (const id of ['mandarinGoby', 'tailspotBlenny']) {
             for (let t = 0; t < 120; t += 0.5) {
                 const p = fishTarget(fish(id), t, height);
-                expect(p.y).toBeCloseTo(height(p.x, p.z) + 0.1);
+                expect(p.y).toBeCloseTo(
+                    height(p.x, p.z) +
+                        (id === 'mandarinGoby' ? 0.035 : 0.03) * 0.3
+                );
             }
         }
         let restingIntervals = 0;
@@ -161,7 +165,7 @@ describe('continuous species locomotion', () => {
                 fishMeshes: meshes
             });
         }
-        expect(a.position.distanceTo(b.position)).toBeGreaterThan(0.45);
+        expect(a.position.distanceTo(b.position)).toBeGreaterThan(0.055);
     });
     it('keeps every species bounded and above surfaces over extended runs', () => {
         const species = [
@@ -179,12 +183,12 @@ describe('continuous species locomotion', () => {
         for (const id of species) {
             for (let t = 0; t < 3600; t += 7) {
                 const p = fishTarget(fish(id), t, height);
-                expect(Math.abs(p.x)).toBeLessThanOrEqual(2.3);
-                expect(Math.abs(p.z)).toBeLessThanOrEqual(1.08);
+                expect(Math.abs(p.x)).toBeLessThanOrEqual(0.61);
+                expect(Math.abs(p.z)).toBeLessThanOrEqual(0.265);
                 expect(p.y).toBeGreaterThanOrEqual(
                     height(p.x, p.z) + p.clearance - 0.000001
                 );
-                expect(p.y).toBeLessThanOrEqual(1.08);
+                expect(p.y).toBeLessThanOrEqual(0.265);
             }
         }
     });

@@ -2,6 +2,8 @@
 // UI CONTROLLER & DOM RENDERER
 // =========================================
 
+import { getSpecies } from '../model/SpeciesCatalog.js';
+import { getTankSpec, tankVolumeLiters } from '../model/TankGeometry.js';
 import { SparklineManager } from './SparklineManager.js';
 import {
     EQUIPMENT_STORE,
@@ -51,6 +53,10 @@ export class UIController {
         // 2. Maintenance Action Buttons
         const maintPanel = document.getElementById('maintenancePanel');
         if (maintPanel) {
+            maintPanel.addEventListener('change', (e) => {
+                if (e.target.id === 'foodType')
+                    callbacks.onFoodType?.(e.target.value);
+            });
             maintPanel.addEventListener('click', (e) => {
                 const btn = e.target.closest('.maint-btn');
                 if (!btn) return;
@@ -83,6 +89,19 @@ export class UIController {
         const livestockTab = document.getElementById('tab-livestock');
         if (livestockTab) {
             livestockTab.addEventListener('click', (e) => {
+                const remove = e.target.closest('[data-remove-kind]');
+                if (remove) {
+                    callbacks.onRemoveDead?.(
+                        remove.dataset.removeKind,
+                        remove.dataset.id
+                    );
+                    return;
+                }
+                const place = e.target.closest('[data-place-coral]');
+                if (place) {
+                    callbacks.onPlaceCoral?.(Number(place.dataset.placeCoral));
+                    return;
+                }
                 const crewItem = e.target.closest(
                     '[data-action="buy-cleanup"]'
                 );
@@ -352,6 +371,8 @@ export class UIController {
                 💧 Top Off (RO/DI)
                 <span class="maint-cooldown">Salinity: ${state.water.salinity.toFixed(1)} ppt</span>
             </button>
+            <label for="foodType">Food type</label>
+            <select id="foodType" aria-label="Food type">${['mixed', 'algae', 'meaty', 'plankton', 'copepods'].map((food) => `<option value="${food}" ${state.foodType === food ? 'selected' : ''}>${food}</option>`).join('')}</select>
             <button class="maint-btn" id="btnFeedFish">
                 🍽 Feed Livestock
                 <span class="maint-cooldown">Today: ${state.feedingsToday}× ${state.lastFed === state.day ? '✅' : ''}</span>
@@ -431,13 +452,27 @@ export class UIController {
             state.livestock.map((f) => f.id + ':' + f.alive).join(',') +
             '|' +
             state.corals
-                .map((c) => c.id + ':' + Math.round(c.health))
+                .map(
+                    (c) =>
+                        c.id +
+                        ':' +
+                        Math.round(c.health) +
+                        ':' +
+                        (c.diameterM || 0).toFixed(3) +
+                        ':' +
+                        c.placementStatus
+                )
                 .join(',') +
             '|' +
-            state.livestock.map((f) => Math.round(f.health)).join(',') +
+            state.livestock
+                .map(
+                    (f) =>
+                        Math.round(f.health) + ':' + (f.lengthM || 0).toFixed(3)
+                )
+                .join(',') +
             '|' +
             (state.cleanupCrew || [])
-                .map((c) => c.id + ':' + c.count)
+                .map((c) => c.id + ':' + c.count + ':' + c.alive)
                 .join(',');
         if (livesSig === this._lastLivestockSig) return;
         this._lastLivestockSig = livesSig;
@@ -471,6 +506,8 @@ export class UIController {
                         <span class="livestock-name">${fish.icon} ${fish.name}</span>
                         <span class="livestock-health" style="color:${color}">${Math.round(fish.health)}%</span>
                     </div>
+                    <div class="store-item-desc">${((fish.lengthM || getSpecies(fish.templateId).juvenileLengthM) * 100).toFixed(1)} cm · ${fish.growthProgress >= 0.95 ? 'Adult' : 'Growing'} · Diet: ${getSpecies(fish.templateId).diet}</div>
+                    ${fish.alive === false ? `<button data-remove-kind="fish" data-id="${fish.id}">Remove remains</button>` : ''}
                 </div>`;
             });
         }
@@ -504,21 +541,32 @@ export class UIController {
                         <span class="livestock-name">${coral.icon} ${coral.name}</span>
                         <span class="livestock-health" style="color:${color}">${Math.round(coral.health)}%</span>
                     </div>
+                    <div class="store-item-desc">${((coral.diameterM || getSpecies(coral.templateId).juvenileLengthM) * 100).toFixed(1)} cm colony · ${coral.growthProgress >= 0.95 ? 'Mature' : 'Growing'}${coral.placementStatus === 'needs-placement' ? ' · Needs space: use Place / move frag' : ''}</div>
+                    ${coral.alive === false || coral.health <= 0 ? `<button data-remove-kind="coral" data-id="${coral.id}">Remove remains</button>` : `<button data-place-coral="${coral.id}">Place / move frag</button>`}
                 </div>`;
             });
         }
 
         html += '<div class="store-category">🦐 Cleanup Crew</div>';
         for (const crew of CLEANUP_DATABASE) {
-            const owned =
-                (state.cleanupCrew || []).find((c) => c.templateId === crew.id)
-                    ?.count || 0;
+            const owned = (state.cleanupCrew || [])
+                .filter(
+                    (c) =>
+                        c.templateId === crew.id &&
+                        c.alive !== false &&
+                        c.health !== 0
+                )
+                .reduce((count, c) => count + c.count, 0);
             html += `<div class="store-item" data-action="buy-cleanup" data-id="${crew.id}">
                 <div class="store-item-top"><div class="store-item-name">${crew.icon} ${crew.name}</div>
                 <div class="store-item-price">$${crew.price}</div></div>
                 <div class="store-item-desc">${crew.desc}</div>
                 <div class="store-item-desc"><strong>Care:</strong> ${crew.care}</div>
                 <div class="store-item-desc">Pack: ${crew.count} · In tank: ${owned}</div></div>`;
+        }
+        for (const crew of state.cleanupCrew || []) {
+            if (crew.alive === false || crew.health <= 0)
+                html += `<div class="livestock-item">${crew.name}: remains <button data-remove-kind="cleanup" data-id="${crew.id}">Remove remains</button></div>`;
         }
         this.updateHTML('tab-livestock', html);
     }
@@ -584,7 +632,12 @@ export class UIController {
             <div class="hud-badge">${state.cycleComplete ? 'Cycled ✓' : 'Cycling...'}</div>
             ${state.livestock.length > 0 ? `<div class="hud-badge">🐠 ${state.livestock.length}</div>` : ''}
         `;
-        this.updateHTML('tankHud', html);
+        const tank = getTankSpec(state);
+        this.updateHTML(
+            'tankHud',
+            html +
+                `<div class="hud-badge">${tank.shape} · ${Math.round(tank.width * 100)} × ${Math.round(tank.depth * 100)} × ${Math.round(tank.height * 100)} cm · ${tankVolumeLiters(tank).toFixed(0)} L</div>`
+        );
     }
 
     static renderPhase(state) {

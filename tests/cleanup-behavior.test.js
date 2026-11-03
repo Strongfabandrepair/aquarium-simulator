@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
+import { containsPoint, getTankSpec } from '../js/model/TankGeometry.js';
 import { createInvertebrateModel } from '../js/graphics/InvertebrateModels.js';
 import {
     updateCleanupMotion,
@@ -8,14 +9,14 @@ import {
 
 const surface = (x, z) => ({
     x,
-    y: -1.3,
+    y: -0.265,
     z,
     normal: new THREE.Vector3(0, 1, 0),
     type: 'sand'
 });
 const habitat = {
-    floorY: -1.3,
-    bounds: { minX: -2.85, maxX: 2.85, minZ: -1.35, maxZ: 1.35 },
+    floorY: -0.265,
+    bounds: { minX: -0.61, maxX: 0.61, minZ: -0.2655, maxZ: 0.165 },
     sample: surface
 };
 
@@ -53,11 +54,11 @@ describe('cleanup anatomy and habitat behavior', () => {
         const previous = mesh.userData.cleanupMotion;
         const raised = {
             ...habitat,
-            sample: (x, z) => ({ ...surface(x, z), y: -0.5, type: 'rock' })
+            sample: (x, z) => ({ ...surface(x, z), y: -0.12, type: 'rock' })
         };
         updateCleanupMotion(mesh, animal, 0, { habitat: raised });
         expect(mesh.userData.cleanupMotion).not.toBe(previous);
-        expect(mesh.position.y).toBe(-0.5);
+        expect(mesh.position.y).toBe(-0.12);
     });
 
     it('has one continuous shell per snail or hermit and the correct exposed leg counts', () => {
@@ -122,7 +123,7 @@ describe('cleanup anatomy and habitat behavior', () => {
             for (const other of context.cleanupMeshes.values())
                 expect(
                     mesh.position.distanceTo(other.position)
-                ).toBeGreaterThan(0.43);
+                ).toBeGreaterThan(0.016);
             context.cleanupMeshes.set(animal.id, mesh);
         }
         for (let i = 0; i < 900; i++) {
@@ -135,12 +136,12 @@ describe('cleanup anatomy and habitat behavior', () => {
                 );
         }
         for (const [id, mesh] of context.cleanupMeshes) {
-            expect(mesh.position.y).toBe(-1.3);
+            expect(mesh.position.y).toBe(-0.265);
             for (const [otherId, other] of context.cleanupMeshes) {
                 if (id !== otherId)
                     expect(
                         mesh.position.distanceTo(other.position)
-                    ).toBeGreaterThan(0.34);
+                    ).toBeGreaterThan(0.012);
             }
         }
     });
@@ -152,8 +153,8 @@ describe('cleanup anatomy and habitat behavior', () => {
         const start = sand.position.clone();
         for (let i = 0; i < 300; i++)
             updateCleanupMotion(sand, snail, 1 / 30, { habitat });
-        expect(sand.position.distanceTo(start)).toBeGreaterThan(0.02);
-        expect(sand.position.y).toBe(-1.3);
+        expect(sand.position.distanceTo(start)).toBeGreaterThan(0.001);
+        expect(sand.position.y).toBe(-0.265);
         const paused = sand.position.clone();
         updateCleanupMotion(sand, snail, 0, { habitat });
         expect(sand.position.equals(paused)).toBe(true);
@@ -164,10 +165,17 @@ describe('cleanup anatomy and habitat behavior', () => {
         const turbo = { id, templateId: 'turboSnail' };
         for (let i = 0; i < 300; i++)
             updateCleanupMotion(glass, turbo, 1 / 30, { habitat });
-        expect(Math.abs(glass.position.x)).toBe(2.94);
+        expect(
+            containsPoint(
+                getTankSpec({}),
+                glass.position.x,
+                glass.position.z,
+                0.022 * 0.59
+            )
+        ).toBe(true);
         expect(glass.userData.habitatMode).toBe('glass');
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(glass.quaternion);
-        expect(Math.abs(up.x)).toBeCloseTo(1);
+        expect(Math.abs(up.y)).toBeLessThan(0.001);
     });
 
     it('anchors rock residents to sloped terrain and limits contact probes', () => {
@@ -179,7 +187,7 @@ describe('cleanup anatomy and habitat behavior', () => {
                 return {
                     x,
                     z,
-                    y: -0.7 + x * 0.1,
+                    y: -0.12 + x * 0.1,
                     normal: new THREE.Vector3(-0.1, 1, 0).normalize(),
                     type: 'rock'
                 };
@@ -192,8 +200,8 @@ describe('cleanup anatomy and habitat behavior', () => {
         const start = mesh.position.clone();
         for (let i = 0; i < 600; i++)
             updateCleanupMotion(mesh, animal, 1 / 60, { habitat: slope });
-        expect(mesh.position.y).toBeCloseTo(-0.7 + mesh.position.x * 0.1, 5);
-        expect(mesh.position.distanceTo(start)).toBeLessThan(0.3);
+        expect(mesh.position.y).toBeCloseTo(-0.12 + mesh.position.x * 0.1, 5);
+        expect(mesh.position.distanceTo(start)).toBeLessThan(0.075);
         expect(probes).toBeLessThan(60);
     });
 
@@ -208,15 +216,22 @@ describe('cleanup anatomy and habitat behavior', () => {
         };
         const context = { habitat, state };
         updateCleanupMotion(mesh, animal, 0.1, context);
-        expect(mesh.userData.burrowDepth).toBe(0.15);
+        expect(mesh.userData.burrowDepth).toBe(0.1);
         state.lastFed = 3;
         state.feedingsToday = 1;
+        state.feedingEvent = {
+            id: 1,
+            timeHours: 72,
+            diet: 'meaty',
+            position: { x: 0, y: 0, z: 0 }
+        };
         updateCleanupMotion(mesh, animal, 0.1, context);
         expect(mesh.userData.burrowDepth).toBe(0);
         for (let i = 0; i < 460; i++)
             updateCleanupMotion(mesh, animal, 0.1, context);
-        expect(mesh.userData.burrowDepth).toBe(0.15);
+        expect(mesh.userData.burrowDepth).toBe(0.1);
         state.feedingsToday = 2;
+        state.feedingEvent.id = 2;
         updateCleanupMotion(mesh, animal, 0.1, context);
         expect(mesh.userData.burrowDepth).toBe(0);
         state.equipment.substrate = 0;

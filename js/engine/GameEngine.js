@@ -3,6 +3,13 @@
 // =========================================
 
 import { GameState } from './GameState.js';
+import {
+    feedLivestock,
+    tickHusbandry,
+    removeDeadLivestock,
+    initializeAnimal
+} from '../model/Husbandry.js';
+import { setupAquariumControls } from '../ui/AquariumControls.js';
 import { ObservableStore } from './ObservableStore.js';
 import { WaterChemistry } from '../model/WaterChemistry.js';
 import { EquipmentManager } from '../model/EquipmentManager.js';
@@ -72,6 +79,7 @@ export class GameEngine {
 
         // Register window global functions for index.html onclick handlers
         this.registerGlobalHandlers();
+        setupAquariumControls(this);
 
         // Start simulation tick loop (logic only)
         this.startLoop();
@@ -137,9 +145,11 @@ export class GameEngine {
         // Run biological & chemical physics (rendering is handled by the RAF loop)
         WaterChemistry.tick(this.state, 0.25);
         LivestockEngine.tick(this.state, 0.25);
+        tickHusbandry(this.state, 0.25);
     }
 
     render(forceUI = true) {
+        this.updateAquascapeControls?.();
         if (forceUI || this._uiDirty) {
             this._uiDirty = false;
             UIController.renderAll(this.state, {
@@ -149,6 +159,23 @@ export class GameEngine {
                 onTopOff: () => this.doTopOff(),
                 onFeedFish: () => this.feedFish(),
                 onGhostFeed: () => this.ghostFeed(),
+                onFoodType: (food) => {
+                    this.state.foodType = food;
+                    this.save();
+                },
+                onRemoveDead: (kind, id) => {
+                    if (removeDeadLivestock(this.state, kind, id)) {
+                        this.save();
+                        this.render();
+                    }
+                },
+                onPlaceCoral: (id) => {
+                    this.renderer.placement?.setEnabled(true);
+                    this.renderer.placement?.begin({
+                        kind: 'coral',
+                        livestockId: id
+                    });
+                },
                 onBuyEquipment: (id) => this.buyEquipment(id),
                 onBuyFish: (id) => this.buyFish(id),
                 onBuyCoral: (id) => this.buyCoral(id),
@@ -266,7 +293,11 @@ export class GameEngine {
 
         this.state.budget -= check.template.price;
         this.state.totalSpent += check.template.price;
-        LivestockEngine.addFish(this.state, fishId);
+        initializeAnimal(
+            LivestockEngine.addFish(this.state, fishId),
+            'fish',
+            this.state
+        );
 
         if (this.state.phase < 3) {
             this.state.phase = 3;
@@ -300,7 +331,11 @@ export class GameEngine {
 
         this.state.budget -= check.template.price;
         this.state.totalSpent += check.template.price;
-        LivestockEngine.addCoral(this.state, coralId);
+        initializeAnimal(
+            LivestockEngine.addCoral(this.state, coralId),
+            'coral',
+            this.state
+        );
 
         if (this.state.phase < 3) {
             this.state.phase = 3;
@@ -326,7 +361,11 @@ export class GameEngine {
             UIController.showToast(check.reason, 'warning');
             return;
         }
-        LivestockEngine.addCleanup(this.state, id);
+        initializeAnimal(
+            LivestockEngine.addCleanup(this.state, id),
+            'cleanup',
+            this.state
+        );
         this.state.budget -= check.template.price;
         this.state.totalSpent += check.template.price;
         this.state.journal.push({
@@ -466,6 +505,7 @@ export class GameEngine {
             return;
         }
 
+        feedLivestock(this.state, this.state.foodType || 'mixed');
         this.state.feedingsToday += 1;
         this.state.lastFed = this.state.day;
 
@@ -483,10 +523,7 @@ export class GameEngine {
             );
             this.readKnowledge('feeding');
         } else {
-            // Heal fish slightly from feeding
-            this.state.livestock.forEach((f) => {
-                if (f.alive) f.health = Math.min(100, f.health + 0.5);
-            });
+            // Species-specific meals and recovery are handled by feedLivestock.
             this.state.journal.push({
                 time: `Day ${this.state.day} ${this.state.hour}:00`,
                 text: `🍽 Fed the livestock.`,

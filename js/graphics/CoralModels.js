@@ -4,6 +4,8 @@ const mergeBufferGeometries =
     BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
 
 const IDS = new Set([
+    'toadstoolLeather',
+    'candyCaneCoral',
     'zoanthids',
     'greenStarPolyps',
     'mushrooms',
@@ -196,6 +198,58 @@ export function createCoralModel(coral, id = coral.templateId) {
             plate.rotation.set(i * 0.06, i * 1.4, 0.12 * Math.sin(i));
             root.add(plate);
         }
+    } else if (id === 'toadstoolLeather') {
+        root.add(
+            new THREE.Mesh(
+                stem(vec(0, 0, 0), vec(0, 0.5, 0), 0.12, 0.09),
+                material(0xb69a73)
+            )
+        );
+        const cap = new THREE.Mesh(
+            disk(0.42, 0.055, 8, 0.7),
+            material(0xb9a486)
+        );
+        cap.position.y = 0.5;
+        root.add(cap);
+        const polyps = [];
+        for (let i = 0; i < 90; i++) {
+            const a = i * 2.39996,
+                r = Math.sqrt((i + 0.5) / 90) * 0.39;
+            const x = Math.cos(a) * r,
+                z = Math.sin(a) * r,
+                y = 0.5 + 0.055 * (r / 0.42) ** 2;
+            polyps.push(stem(vec(x, y, z), vec(x, y + 0.06, z), 0.004));
+            polyps.push(bead(x, y + 0.065, z, 0.012));
+        }
+        batch(root, polyps, material(0xc4e5ad, 0.03));
+    } else if (id === 'candyCaneCoral') {
+        const branches = [],
+            heads = [],
+            mouths = [];
+        for (let i = 0; i < 7; i++) {
+            const a = i * 2.4,
+                r = i === 0 ? 0 : 0.25,
+                x = Math.cos(a) * r,
+                z = Math.sin(a) * r,
+                y = 0.32 + rand(i) * 0.16;
+            branches.push(
+                stem(vec(x * 0.4, 0.03, z * 0.4), vec(x, y, z), 0.035, 0.05)
+            );
+            heads.push(bead(x, y, z, 0.11, [1, 0.55, 1]));
+            const disc = disk(0.09, -0.012, 12, i);
+            disc.translate(x, y + 0.055, z);
+            mouths.push(disc);
+            mouths.push(bead(x, y + 0.057, z, 0.018, [1, 0.2, 0.4]));
+        }
+        batch(root, branches, material(0x947f6b));
+        batch(root, heads, material(0x629d77));
+        const oral = material(0x83e4b2, 0.08);
+        oral.side = THREE.DoubleSide;
+        mouths.forEach((geometry) => {
+            geometry.deleteAttribute('uv');
+            geometry.deleteAttribute('color');
+        });
+        batch(root, mouths, oral);
     } else if (id === 'mushrooms') {
         const mat = material(0x3bada1, 0.05);
         mat.side = THREE.DoubleSide;

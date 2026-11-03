@@ -16,9 +16,9 @@ export const TANK_CONFIGS = {
         label: '20 Gallon Nano',
         maxFish: 4,
         maxCoral: 8,
-        width: 4.5,
-        height: 2.2,
-        depth: 2.2
+        width: 0.61,
+        height: 0.42,
+        depth: 0.305
     },
     medium: {
         gallons: 55,
@@ -26,9 +26,9 @@ export const TANK_CONFIGS = {
         label: '55 Gallon Reef',
         maxFish: 10,
         maxCoral: 20,
-        width: 6.0,
-        height: 3.0,
-        depth: 3.0
+        width: 1.22,
+        height: 0.53,
+        depth: 0.33
     },
     large: {
         gallons: 120,
@@ -36,9 +36,9 @@ export const TANK_CONFIGS = {
         label: '120 Gallon Reef',
         maxFish: 20,
         maxCoral: 40,
-        width: 8.0,
-        height: 3.8,
-        depth: 3.8
+        width: 1.22,
+        height: 0.61,
+        depth: 0.61
     }
 };
 
@@ -82,6 +82,10 @@ export const DEFAULT_GAME_STATE = {
     speed: 1,
     tankSize: 'medium',
     tankGallons: 55,
+    tankSpec: null,
+    placedItems: [],
+    foodType: 'mixed',
+    feedingEvent: null,
     budget: 5000,
     totalSpent: 0,
     day: 1,
@@ -219,6 +223,18 @@ export class GameState {
             base.equipment,
             snapshot.equipment || {}
         );
+        // Malformed or old placement lists must not break the editor.
+        this.data.placedItems = Array.isArray(snapshot.placedItems)
+            ? snapshot.placedItems.filter(
+                  (item) =>
+                      item &&
+                      ['rock', 'coral'].includes(item.kind) &&
+                      item.position &&
+                      ['x', 'y', 'z'].every((axis) =>
+                          Number.isFinite(item.position[axis])
+                      )
+              )
+            : [];
         this.data.knowledge = Object.assign(
             base.knowledge,
             snapshot.knowledge || {}

@@ -15,9 +15,9 @@
       label: "20 Gallon Nano",
       maxFish: 4,
       maxCoral: 8,
-      width: 4.5,
-      height: 2.2,
-      depth: 2.2
+      width: 0.61,
+      height: 0.42,
+      depth: 0.305
     },
     medium: {
       gallons: 55,
@@ -25,9 +25,9 @@
       label: "55 Gallon Reef",
       maxFish: 10,
       maxCoral: 20,
-      width: 6,
-      height: 3,
-      depth: 3
+      width: 1.22,
+      height: 0.53,
+      depth: 0.33
     },
     large: {
       gallons: 120,
@@ -35,9 +35,9 @@
       label: "120 Gallon Reef",
       maxFish: 20,
       maxCoral: 40,
-      width: 8,
-      height: 3.8,
-      depth: 3.8
+      width: 1.22,
+      height: 0.61,
+      depth: 0.61
     }
   };
   var WATER_IDEAL = {
@@ -78,6 +78,10 @@
     speed: 1,
     tankSize: "medium",
     tankGallons: 55,
+    tankSpec: null,
+    placedItems: [],
+    foodType: "mixed",
+    feedingEvent: null,
     budget: 5e3,
     totalSpent: 0,
     day: 1,
@@ -220,6 +224,11 @@
         base.equipment,
         snapshot.equipment || {}
       );
+      this.data.placedItems = Array.isArray(snapshot.placedItems) ? snapshot.placedItems.filter(
+        (item) => item && ["rock", "coral"].includes(item.kind) && item.position && ["x", "y", "z"].every(
+          (axis) => Number.isFinite(item.position[axis])
+        )
+      ) : [];
       this.data.knowledge = Object.assign(
         base.knowledge,
         snapshot.knowledge || {}
@@ -245,6 +254,532 @@
       localStorage.setItem(ACTIVE_PROFILE_KEY, name);
     }
   };
+
+  // js/model/SpeciesCatalog.js
+  var rows = [
+    ["clownfish", 0.11, 0.045, 500, "territorial", "mixed"],
+    ["royalGramma", 0.08, 0.035, 400, "cave", "meaty"],
+    ["firefishGoby", 0.09, 0.04, 400, "hover", "plankton"],
+    ["yellowTang", 0.2, 0.065, 900, "cruise", "algae"],
+    ["blueHippoTang", 0.3, 0.07, 1100, "cruise", "mixed"],
+    ["banggaiCardinal", 0.08, 0.035, 450, "hover", "meaty"],
+    ["tailspotBlenny", 0.06, 0.03, 360, "perch", "algae"],
+    ["sixLineWrasse", 0.1, 0.035, 500, "weave", "meaty"],
+    ["mandarinGoby", 0.08, 0.035, 500, "bottom", "copepods"],
+    ["flameAngel", 0.1, 0.04, 600, "weave", "mixed"],
+    ["lyretailAnthias", 0.15, 0.055, 600, "school", "plankton", "royalGramma"],
+    ["greenChromis", 0.1, 0.035, 500, "school", "plankton", "clownfish"],
+    ["yellowWatchmanGoby", 0.1, 0.04, 500, "bottom", "meaty", "tailspotBlenny"],
+    ["zoanthids", 0.22, 0.055, 600, "colony", "plankton"],
+    ["greenStarPolyps", 0.3, 0.06, 500, "colony", "plankton"],
+    ["mushrooms", 0.18, 0.05, 600, "colony", "plankton"],
+    ["xeniaCorals", 0.24, 0.055, 400, "colony", "plankton"],
+    ["hammerCoral", 0.28, 0.07, 800, "colony", "meaty"],
+    ["torchCoral", 0.3, 0.08, 850, "colony", "meaty"],
+    ["frogspawn", 0.28, 0.07, 800, "colony", "meaty"],
+    ["acropora", 0.35, 0.055, 1e3, "colony", "plankton"],
+    ["montipora", 0.4, 0.06, 900, "colony", "plankton"],
+    ["birdsnest", 0.25, 0.055, 800, "colony", "plankton"],
+    ["toadstoolLeather", 0.35, 0.07, 850, "colony", "plankton", "mushrooms"],
+    ["candyCaneCoral", 0.22, 0.055, 800, "colony", "meaty", "hammerCoral"],
+    ["hermitCrab", 0.035, 0.016, 450, "crawl", "mixed"],
+    ["turboSnail", 0.055, 0.022, 600, "graze", "algae"],
+    ["nassariusSnail", 0.025, 0.012, 400, "burrow", "meaty"],
+    ["emeraldCrab", 0.05, 0.02, 500, "crawl", "algae"],
+    ["cleanerShrimp", 0.06, 0.025, 450, "station", "meaty"],
+    ["peppermintShrimp", 0.05, 0.022, 450, "nocturnal", "meaty"],
+    ["trochusSnail", 0.04, 0.018, 500, "graze", "algae", "turboSnail"],
+    ["cerithSnail", 0.035, 0.015, 500, "burrow", "mixed", "nassariusSnail"]
+  ];
+  var SPECIES = Object.fromEntries(
+    rows.map(
+      ([
+        id,
+        adultLengthM,
+        juvenileLengthM,
+        growthDays,
+        movement,
+        diet,
+        model
+      ]) => [
+        id,
+        {
+          id,
+          adultLengthM,
+          juvenileLengthM,
+          growthDays,
+          movement,
+          diet,
+          model: model || id
+        }
+      ]
+    )
+  );
+  function getSpecies(id) {
+    return SPECIES[id] || SPECIES.clownfish;
+  }
+  function physicalSize(animal, kind = "fish") {
+    const species = getSpecies(animal.templateId);
+    const value = kind === "coral" ? animal.diameterM : animal.lengthM;
+    return Number.isFinite(value) && value > 0 ? Math.min(species.adultLengthM * 1.1, Math.max(5e-3, value)) : species.juvenileLengthM;
+  }
+  var fish = (id, name, price, minTank, desc) => ({
+    id,
+    name,
+    price,
+    minTank,
+    desc,
+    icon: "\u{1F41F}",
+    difficulty: "medium",
+    care: "Provide mature marine water, shelter, compatible tankmates and the indicated diet.",
+    compat: ["peaceful reef fish"],
+    incompatible: ["aggressive predators"],
+    maxPer: id === "yellowWatchmanGoby" ? 1 : 8,
+    size: "small",
+    realPrice: "Varies",
+    feedRate: 0.25,
+    nitrateContrib: 0.4,
+    o2Consume: 0.08
+  });
+  var NEW_FISH = [
+    fish(
+      "lyretailAnthias",
+      "Lyretail Anthias",
+      45,
+      125,
+      "Orange-pink planktivore with a lyre tail; swims above the reef in loose shoals."
+    ),
+    fish(
+      "greenChromis",
+      "Blue-green Chromis",
+      18,
+      30,
+      "Iridescent blue-green damselfish; loose open-water shoals with individual spacing."
+    ),
+    fish(
+      "yellowWatchmanGoby",
+      "Yellow Watchman Goby",
+      30,
+      30,
+      "Yellow, blue-spotted burrow sentinel; perches near the substrate and picks meaty food."
+    )
+  ];
+  var NEW_CORALS = [
+    {
+      id: "toadstoolLeather",
+      name: "Toadstool Leather",
+      icon: "\u{1FAB8}",
+      price: 40,
+      difficulty: "easy",
+      type: "soft",
+      lightNeed: "moderate",
+      alkConsume: 0.05,
+      calcConsume: 0.2,
+      flowNeed: "moderate",
+      minTank: 20,
+      desc: "A stalked leather coral with a broad crown and fine extended polyps.",
+      care: "Provide moderate flow and room for its crown.",
+      realPrice: "Varies"
+    },
+    {
+      id: "candyCaneCoral",
+      name: "Candy Cane Coral",
+      icon: "\u{1FAB8}",
+      price: 45,
+      difficulty: "easy",
+      type: "lps",
+      lightNeed: "moderate",
+      alkConsume: 0.5,
+      calcConsume: 2,
+      flowNeed: "low",
+      minTank: 20,
+      desc: "Branching hard coral with fleshy green oral discs.",
+      care: "Feed small meaty particles and leave room between colonies.",
+      realPrice: "Varies"
+    }
+  ];
+  var NEW_CLEANUP = [
+    {
+      id: "trochusSnail",
+      name: "Trochus Snail",
+      icon: "\u{1F40C}",
+      price: 5,
+      realPrice: "Varies",
+      desc: "Conical algae grazer that explores rock and sand.",
+      count: 1,
+      algaeReduce: 0.8,
+      care: "Provide established algae and stable salinity."
+    },
+    {
+      id: "cerithSnail",
+      name: "Cerith Snail",
+      icon: "\u{1F40C}",
+      price: 3,
+      realPrice: "Varies",
+      desc: "Slender detritus grazer that searches sandy substrate.",
+      count: 1,
+      algaeReduce: 0.4,
+      care: "Provide mature substrate and stable salinity."
+    }
+  ];
+
+  // js/model/TankGeometry.js
+  var TANK_PRESETS = {
+    nano: { shape: "rectangular", width: 0.61, height: 0.42, depth: 0.305 },
+    medium: { shape: "rectangular", width: 1.22, height: 0.53, depth: 0.33 },
+    large: { shape: "rectangular", width: 1.22, height: 0.61, depth: 0.61 }
+  };
+  var clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  var dimension = (n, fallback) => Number.isFinite(Number(n)) && Number(n) > 0 ? clamp(Number(n), 0.25, 3) : fallback;
+  function normalizeTankSpec(spec = {}, preset = "medium") {
+    const base = TANK_PRESETS[preset] || TANK_PRESETS.medium;
+    spec ||= {};
+    const shape = ["rectangular", "cube", "cylinder", "bowfront"].includes(
+      spec.shape
+    ) ? spec.shape : base.shape;
+    const width = dimension(spec.width, base.width);
+    return {
+      shape,
+      width,
+      height: shape === "cube" ? width : dimension(spec.height, base.height),
+      depth: shape === "cube" || shape === "cylinder" ? width : dimension(spec.depth, base.depth)
+    };
+  }
+  function getTankSpec(state = {}) {
+    return normalizeTankSpec(state.tankSpec, state.tankSize);
+  }
+  var waterLevel = (spec) => normalizeTankSpec(spec).height / 2 - 0.025;
+  function tankVolumeLiters(input) {
+    const s = normalizeTankSpec(input);
+    let area2 = s.width * s.depth;
+    if (s.shape === "cylinder") area2 = Math.PI * (s.width / 2) ** 2;
+    if (s.shape === "bowfront") area2 *= 1 - 0.22 / 3;
+    return area2 * (s.height - 0.025) * 1e3;
+  }
+  function frontBoundary(s, x, margin) {
+    if (s.shape !== "bowfront") return s.depth / 2 - margin;
+    const a = s.depth * 0.22 / (s.width / 2) ** 2;
+    return s.depth / 2 - a * x * x - margin * Math.sqrt(1 + (2 * a * x) ** 2) - a * margin * margin;
+  }
+  function containsPoint(input, x, z, margin = 0) {
+    const s = normalizeTankSpec(input);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+    margin = Math.max(0, margin);
+    if (s.shape === "cylinder")
+      return Math.hypot(x, z) <= Math.max(0, s.width / 2 - margin) + 1e-9;
+    if (Math.abs(x) > s.width / 2 - margin + 1e-9 || z < -s.depth / 2 + margin - 1e-9)
+      return false;
+    return z <= frontBoundary(s, x, margin) + 1e-9;
+  }
+  function constrainPoint(input, point, margin = 0) {
+    const s = normalizeTankSpec(input);
+    margin = clamp(
+      Number.isFinite(margin) ? margin : 0,
+      0,
+      Math.min(s.width, s.depth, s.height) * 0.45
+    );
+    let x = Number.isFinite(point.x) ? point.x : 0;
+    let z = Number.isFinite(point.z) ? point.z : 0;
+    if (s.shape === "cylinder") {
+      const r = s.width / 2 - margin;
+      const length = Math.hypot(x, z);
+      if (length > r) {
+        x *= r / length;
+        z *= r / length;
+      }
+    } else {
+      x = clamp(x, -s.width / 2 + margin, s.width / 2 - margin);
+      z = clamp(z, -s.depth / 2 + margin, frontBoundary(s, x, margin));
+    }
+    return {
+      x,
+      y: clamp(
+        Number.isFinite(point.y) ? point.y : 0,
+        -s.height / 2 + margin,
+        waterLevel(s) - margin
+      ),
+      z
+    };
+  }
+  function tankOutline(input, segments = 64) {
+    const s = normalizeTankSpec(input);
+    if (s.shape === "cylinder")
+      return Array.from({ length: segments }, (_, i) => ({
+        x: Math.cos(i / segments * Math.PI * 2) * s.width / 2,
+        z: Math.sin(i / segments * Math.PI * 2) * s.width / 2
+      }));
+    const points = [
+      { x: -s.width / 2, z: -s.depth / 2 },
+      { x: s.width / 2, z: -s.depth / 2 }
+    ];
+    if (s.shape === "bowfront") {
+      for (let i = 0; i <= segments / 2; i++) {
+        const x = s.width / 2 - i / (segments / 2) * s.width;
+        points.push({
+          x,
+          z: s.depth / 2 - s.depth * 0.22 * (x / (s.width / 2)) ** 2
+        });
+      }
+    } else
+      points.push(
+        { x: s.width / 2, z: s.depth / 2 },
+        { x: -s.width / 2, z: s.depth / 2 }
+      );
+    return points;
+  }
+  function substrateHeight(state) {
+    const spec = getTankSpec(state);
+    return state.equipment?.substrate > 0 ? clamp(
+      state.equipment.substrate * 0.453592 / 1500 / (tankVolumeLiters(spec) / 1e3 / (spec.height - 0.025)),
+      0.012,
+      0.065
+    ) : 0;
+  }
+  function defaultRockPlacements(input, floorY) {
+    const spec = normalizeTankSpec(input);
+    const size = Math.min(spec.depth * 0.42, spec.height * 0.45, 0.22);
+    return [-1, 0, 1].map((side, i) => ({
+      id: `rock-default-${i}`,
+      kind: "rock",
+      position: {
+        x: side * spec.width * 0.22,
+        y: floorY ?? -spec.height / 2,
+        z: i === 1 ? -spec.depth * 0.12 : spec.depth * 0.03
+      },
+      normal: { x: 0, y: 1, z: 0 },
+      rotation: i * 1.7,
+      size: size * (i === 1 ? 1.2 : 1)
+    }));
+  }
+
+  // js/model/Husbandry.js
+  var FOOD_TYPES = ["mixed", "algae", "meaty", "plankton", "copepods"];
+  var simulationHours = (state) => state.day * 24 + state.hour + state.minute / 60;
+  function acceptsFood(species, food) {
+    const diet = species?.diet || "mixed";
+    if (Array.isArray(diet))
+      return diet.some((value) => acceptsFood({ diet: value }, food));
+    if (food === "mixed") return diet !== "copepods";
+    return diet === food || diet === "mixed" || diet === "meaty" && food === "plankton";
+  }
+  function initializeAnimal(animal, kind, state) {
+    const species = getSpecies(animal.templateId);
+    const adult = species?.adultLengthM || (kind === "coral" ? 0.2 : 0.1);
+    const juvenile = species?.juvenileLengthM || adult * 0.5;
+    const key = kind === "coral" ? "diameterM" : "lengthM";
+    if (!Number.isFinite(animal.growthProgress)) {
+      const fraction = Number.isFinite(animal[key]) ? Math.max(
+        0,
+        Math.min(
+          1,
+          (animal[key] - juvenile) / Math.max(1e-3, adult - juvenile)
+        )
+      ) : 0;
+      animal.growthProgress = 1 - Math.sqrt(1 - fraction);
+    }
+    animal.ageDays ??= Math.max(0, state.day - (animal.addedDay ?? state.day));
+    animal[key] ??= juvenile + (adult - juvenile) * animal.growthProgress;
+    animal.lastMealDay ??= Math.max(
+      state.lastFed || 0,
+      animal.addedDay ?? state.day
+    );
+    animal.health ??= 100;
+    animal.alive ??= animal.health > 0;
+  }
+  function feedLivestock(state, food = "mixed") {
+    if (!FOOD_TYPES.includes(food)) return false;
+    const tank = getTankSpec(state);
+    state.feedingEvent = {
+      id: (state.feedingEvent?.id || 0) + 1,
+      timeHours: simulationHours(state),
+      diet: food,
+      position: { x: 0, y: waterLevel(tank) - 0.025, z: tank.depth * 0.16 }
+    };
+    for (const [kind, animals] of [
+      ["fish", state.livestock],
+      ["cleanup", state.cleanupCrew],
+      ["coral", state.corals]
+    ]) {
+      for (const animal of animals) {
+        initializeAnimal(animal, kind, state);
+        if (animal.alive && acceptsFood(getSpecies(animal.templateId), food)) {
+          animal.lastMealDay = state.day;
+          animal.lastMealHours = simulationHours(state);
+          animal.health = Math.min(100, animal.health + 0.4);
+        }
+      }
+    }
+    return true;
+  }
+  function tickHusbandry(state, hours) {
+    if (!Number.isFinite(hours) || hours <= 0) return;
+    for (const [kind, animals] of [
+      ["fish", state.livestock],
+      ["coral", state.corals],
+      ["cleanup", state.cleanupCrew]
+    ]) {
+      for (const animal of animals) {
+        initializeAnimal(animal, kind, state);
+        if (kind === "cleanup" && animal.alive) {
+          const water = state.water;
+          const stress = (water.ammonia > 0.1 ? 1.5 : 0) + (water.salinity < 30 || water.salinity > 38 ? 1 : 0) + (water.temperature < 72 || water.temperature > 85 ? 0.5 : 0);
+          const grazing2 = getSpecies(animal.templateId)?.diet === "algae" && state.algaeLevel > 5;
+          const hungry = !grazing2 && state.day - animal.lastMealDay > 4;
+          animal.health = Math.max(
+            0,
+            Math.min(
+              100,
+              animal.health + (stress || hungry ? -stress - (hungry ? 0.3 : 0) : 0.08) * hours
+            )
+          );
+        }
+        if (animal.health <= 0) animal.alive = false;
+        if (!animal.alive) {
+          if (!animal.deathRecorded) {
+            animal.deathRecorded = true;
+            state.journal.push({
+              time: `Day ${state.day}`,
+              text: `${animal.name} has died. Remove the remains.`,
+              tip: "Investigate water quality, feeding and compatibility before replacing livestock."
+            });
+          }
+          state.water.ammonia += 8e-3 * hours * (animal.count || 1) * 55 / Math.max(10, state.tankGallons);
+          continue;
+        }
+        animal.ageDays += hours / 24;
+        const species = getSpecies(animal.templateId);
+        const litCoral = kind === "coral" && state.equipment.lightOn && (state.equipment.lightBasic || state.equipment.lightReef);
+        const grazing = species?.diet === "algae" && state.algaeLevel > 5;
+        const nourished = kind === "coral" ? litCoral : grazing || state.day - animal.lastMealDay <= 2;
+        const condition = nourished && animal.health >= 70 ? animal.health / 100 : 0;
+        animal.growthProgress = Math.min(
+          1,
+          animal.growthProgress + hours / 24 / (species?.growthDays || 365) * condition
+        );
+        const adult = species?.adultLengthM || (kind === "coral" ? 0.2 : 0.1);
+        const juvenile = species?.juvenileLengthM || adult * 0.5;
+        const growth = 1 - Math.pow(1 - animal.growthProgress, 2);
+        animal[kind === "coral" ? "diameterM" : "lengthM"] = juvenile + (adult - juvenile) * growth;
+      }
+    }
+  }
+  function removeDeadLivestock(state, kind, id) {
+    const key = { fish: "livestock", coral: "corals", cleanup: "cleanupCrew" }[kind];
+    if (!key) return false;
+    const index = state[key].findIndex(
+      (animal2) => String(animal2.id) === String(id)
+    );
+    const animal = state[key][index];
+    if (!animal || animal.alive !== false && animal.health > 0) return false;
+    state[key].splice(index, 1);
+    if (kind === "coral")
+      state.placedItems = state.placedItems.filter(
+        (item) => !(item.kind === "coral" && String(item.livestockId) === String(id))
+      );
+    state.journal.push({
+      time: `Day ${state.day}`,
+      text: `Removed remains of ${animal.name}.`,
+      tip: "Removal stops further decay from this animal; test water and investigate the cause."
+    });
+    return true;
+  }
+
+  // js/ui/AquariumControls.js
+  function setupAquariumControls(engine) {
+    const form = document.getElementById("customTankForm");
+    const readSpec = () => normalizeTankSpec({
+      shape: form.elements.shape.value,
+      width: Number(form.elements.width.value) / 100,
+      height: Number(form.elements.height.value) / 100,
+      depth: Number(form.elements.depth.value) / 100
+    });
+    form?.addEventListener("input", () => {
+      const spec = readSpec();
+      const liters = tankVolumeLiters(spec);
+      document.getElementById("customTankVolume").textContent = `${liters.toFixed(1)} L / ${(liters / 3.785411784).toFixed(1)} US gal at the fill line`;
+      form.elements.height.disabled = spec.shape === "cube";
+      form.elements.depth.disabled = ["cube", "cylinder"].includes(
+        spec.shape
+      );
+    });
+    form?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      const spec = readSpec();
+      const gallons = tankVolumeLiters(spec) / 3.785411784;
+      window.startGame(
+        gallons < 35 ? "nano" : gallons < 85 ? "medium" : "large"
+      );
+      engine.state.tankSpec = spec;
+      engine.state.tankGallons = Math.round(gallons * 10) / 10;
+      engine.save();
+      engine.render();
+    });
+    const tools = document.getElementById("aquascapeTools");
+    if (!tools) return;
+    tools.innerHTML = `<p>Move purchased rocks and coral frags. Click a supported surface to commit; green is valid, red is blocked. Rotation snaps to 15\xB0. Escape cancels.</p>
+        <label><input id="placementEnabled" type="checkbox"> Edit placement</label>
+        <label>Purchased item <select id="placementItem"><option value="">Select an item</option></select></label>
+        <button id="placementBegin">Move selected</button>
+        <button id="placementLeft" aria-label="Rotate placement left">\u21B6 15\xB0</button>
+        <button id="placementRight" aria-label="Rotate placement right">\u21B7 15\xB0</button>
+        <button id="placementCancel">Cancel</button>
+        <p id="placementStatus" role="status">Enable editing to select an object in the tank.</p>`;
+    const enabled = document.getElementById("placementEnabled");
+    const select = document.getElementById("placementItem");
+    let inventory = "";
+    engine.updateAquascapeControls = () => {
+      const state = engine.state;
+      const rocks = state.placedItems.filter((item) => item.kind === "rock");
+      const signature = rocks.map((item) => item.id).join(",") + "|" + state.corals.map((c) => c.id + ":" + c.templateId + ":" + c.alive).join(",");
+      if (signature === inventory) return;
+      inventory = signature;
+      const previous = select.value;
+      select.replaceChildren(new window.Option("Select an item", ""));
+      rocks.forEach(
+        (item, i) => select.add(
+          new window.Option(`Live rock ${i + 1}`, `rock:${item.id}`)
+        )
+      );
+      state.corals.filter((c) => c.alive !== false).forEach(
+        (c) => select.add(new window.Option(c.name, `coral:${c.id}`))
+      );
+      select.value = previous;
+    };
+    const enable = () => {
+      engine.renderer.placement?.setEnabled(enabled.checked);
+      if (engine.renderer.controls)
+        engine.renderer.controls.enabled = !enabled.checked;
+    };
+    enabled.addEventListener("change", enable);
+    document.getElementById("placementBegin").addEventListener("click", () => {
+      const [kind, ...parts] = select.value.split(":");
+      if (!parts.length) return;
+      enabled.checked = true;
+      enable();
+      engine.renderer.placement?.begin(
+        kind === "coral" ? { kind, livestockId: Number(parts.join(":")) } : { kind, id: parts.join(":") }
+      );
+    });
+    document.getElementById("placementLeft").addEventListener(
+      "click",
+      () => engine.renderer.placement?.rotate(-15)
+    );
+    document.getElementById("placementRight").addEventListener("click", () => engine.renderer.placement?.rotate(15));
+    document.getElementById("placementCancel").addEventListener("click", () => engine.renderer.placement?.cancel());
+    engine.renderer.onPlacementStatus = (status) => {
+      document.getElementById("placementStatus").textContent = `${status.reason || ""}${status.selection ? ` Rotation: ${status.rotation || 0}\xB0` : ""}`;
+      if (engine.renderer.placement?.enabled) {
+        enabled.checked = true;
+        document.getElementById("aquascapePanel").open = true;
+        engine.renderer.controls.enabled = false;
+      }
+    };
+    engine.renderer.onPlacementCommit = () => {
+      engine.save();
+      engine.render();
+    };
+  }
 
   // js/engine/ObservableStore.js
   var ObservableStore = class {
@@ -1061,6 +1596,9 @@
       algaeReduce: 0
     }
   ];
+  FISH_DATABASE.push(...NEW_FISH);
+  CORAL_DATABASE.push(...NEW_CORALS);
+  CLEANUP_DATABASE.push(...NEW_CLEANUP);
   var KNOWLEDGE_BASE = {
     nitrogenCycle: {
       title: "\u{1F504} The Nitrogen Cycle",
@@ -1514,10 +2052,10 @@
       }
       let totalNitrateProduction = 0;
       let totalO2Consumption = 0;
-      state.livestock.forEach((fish) => {
-        if (fish.alive) {
-          totalNitrateProduction += (fish.nitrateContrib || 0.4) * 0.02 * hoursPassed;
-          totalO2Consumption += (fish.o2Consume || 0.1) * hoursPassed;
+      state.livestock.forEach((fish2) => {
+        if (fish2.alive) {
+          totalNitrateProduction += (fish2.nitrateContrib || 0.4) * 0.02 * hoursPassed;
+          totalO2Consumption += (fish2.o2Consume || 0.1) * hoursPassed;
         }
       });
       w.nitrate += totalNitrateProduction;
@@ -1538,6 +2076,7 @@
       }
       let algaeReduced = 0;
       state.cleanupCrew.forEach((crew) => {
+        if (crew.alive === false || crew.health === 0) return;
         const species = CLEANUP_DATABASE.find(
           (c) => c.id === crew.templateId
         );
@@ -1617,10 +2156,10 @@
   var LivestockEngine = class {
     static tick(state, hoursPassed = 1) {
       const w = state.water;
-      state.livestock.forEach((fish) => {
-        if (!fish.alive) return;
-        fish.stateTimer = (fish.stateTimer || 0) + hoursPassed;
-        const species = String(fish.templateId || "").toLowerCase();
+      state.livestock.forEach((fish2) => {
+        if (!fish2.alive) return;
+        fish2.stateTimer = (fish2.stateTimer || 0) + hoursPassed;
+        const species = String(fish2.templateId || "").toLowerCase();
         const getFishTraits = (sp) => {
           if (sp === "yellowtang" || sp === "bluehippotang") {
             return {
@@ -1706,51 +2245,51 @@
         const traits = getFishTraits(species);
         const zone = traits.zone;
         const behavior = traits.behavior;
-        if (fish.homeX == null || fish.homeY == null || fish.homeZ == null) {
-          const laneSeed = (fish.id || 1) * 37 % 100 / 100;
-          fish.homeX = zone.x[0] + laneSeed * (zone.x[1] - zone.x[0]);
-          fish.homeY = zone.y[0] + laneSeed * 7 % 1 * (zone.y[1] - zone.y[0]);
-          fish.homeZ = zone.z[0] + laneSeed * 13 % 1 * (zone.z[1] - zone.z[0]);
-          fish.roamSeed = laneSeed * Math.PI * 2;
-          fish.roamSpread = zone.spread;
+        if (fish2.homeX == null || fish2.homeY == null || fish2.homeZ == null) {
+          const laneSeed = (fish2.id || 1) * 37 % 100 / 100;
+          fish2.homeX = zone.x[0] + laneSeed * (zone.x[1] - zone.x[0]);
+          fish2.homeY = zone.y[0] + laneSeed * 7 % 1 * (zone.y[1] - zone.y[0]);
+          fish2.homeZ = zone.z[0] + laneSeed * 13 % 1 * (zone.z[1] - zone.z[0]);
+          fish2.roamSeed = laneSeed * Math.PI * 2;
+          fish2.roamSpread = zone.spread;
         }
-        fish.behaviorState = behavior;
-        const baseX = fish.homeX ?? fish.x ?? 0.5;
-        const baseY = fish.homeY ?? fish.y ?? 0.5;
-        const baseZ = fish.homeZ ?? fish.z ?? 0.5;
-        const roamSeed = fish.roamSeed ?? (fish.id || 1) * 0.37;
-        const spread = fish.roamSpread ?? (behavior === "cruising" ? 0.28 : behavior === "darting" ? 0.24 : behavior === "perching" ? 0.12 : 0.16);
+        fish2.behaviorState = behavior;
+        const baseX = fish2.homeX ?? fish2.x ?? 0.5;
+        const baseY = fish2.homeY ?? fish2.y ?? 0.5;
+        const baseZ = fish2.homeZ ?? fish2.z ?? 0.5;
+        const roamSeed = fish2.roamSeed ?? (fish2.id || 1) * 0.37;
+        const spread = fish2.roamSpread ?? (behavior === "cruising" ? 0.28 : behavior === "darting" ? 0.24 : behavior === "perching" ? 0.12 : 0.16);
         if (behavior === "cruising") {
-          fish.targetX = baseX + Math.sin(fish.stateTimer * 0.7 + roamSeed) * spread;
-          fish.targetY = baseY + Math.sin(fish.stateTimer * 0.45 + roamSeed * 0.5) * (spread * 0.55);
-          fish.targetZ = baseZ + Math.cos(fish.stateTimer * 0.55 + roamSeed * 0.8) * (spread * 0.75);
+          fish2.targetX = baseX + Math.sin(fish2.stateTimer * 0.7 + roamSeed) * spread;
+          fish2.targetY = baseY + Math.sin(fish2.stateTimer * 0.45 + roamSeed * 0.5) * (spread * 0.55);
+          fish2.targetZ = baseZ + Math.cos(fish2.stateTimer * 0.55 + roamSeed * 0.8) * (spread * 0.75);
         } else if (behavior === "hovering") {
-          fish.targetX = baseX + Math.sin(fish.stateTimer * 1.2 + roamSeed) * (spread * 0.85);
-          fish.targetY = baseY + Math.cos(fish.stateTimer * 1.4 + roamSeed * 0.9) * (spread * 0.55);
-          fish.targetZ = baseZ + Math.cos(fish.stateTimer * 1 + roamSeed * 0.7) * (spread * 0.8);
+          fish2.targetX = baseX + Math.sin(fish2.stateTimer * 1.2 + roamSeed) * (spread * 0.85);
+          fish2.targetY = baseY + Math.cos(fish2.stateTimer * 1.4 + roamSeed * 0.9) * (spread * 0.55);
+          fish2.targetZ = baseZ + Math.cos(fish2.stateTimer * 1 + roamSeed * 0.7) * (spread * 0.8);
         } else if (behavior === "perching") {
-          fish.targetX = baseX + Math.sin(fish.stateTimer * 0.7 + roamSeed) * (spread * 0.9);
-          fish.targetY = baseY + Math.abs(Math.sin(fish.stateTimer * 1.3 + roamSeed * 0.8)) * (spread * 0.55);
-          fish.targetZ = baseZ + Math.cos(fish.stateTimer * 0.6 + roamSeed * 0.6) * (spread * 0.65);
+          fish2.targetX = baseX + Math.sin(fish2.stateTimer * 0.7 + roamSeed) * (spread * 0.9);
+          fish2.targetY = baseY + Math.abs(Math.sin(fish2.stateTimer * 1.3 + roamSeed * 0.8)) * (spread * 0.55);
+          fish2.targetZ = baseZ + Math.cos(fish2.stateTimer * 0.6 + roamSeed * 0.6) * (spread * 0.65);
         } else if (behavior === "darting") {
-          fish.targetX = baseX + Math.sin(fish.stateTimer * 1.6 + roamSeed) * (spread * 1.3);
-          fish.targetY = baseY + Math.cos(fish.stateTimer * 1.3 + roamSeed * 0.75) * (spread * 0.9);
-          fish.targetZ = baseZ + Math.sin(fish.stateTimer * 1.1 + roamSeed * 1.2) * (spread * 1);
+          fish2.targetX = baseX + Math.sin(fish2.stateTimer * 1.6 + roamSeed) * (spread * 1.3);
+          fish2.targetY = baseY + Math.cos(fish2.stateTimer * 1.3 + roamSeed * 0.75) * (spread * 0.9);
+          fish2.targetZ = baseZ + Math.sin(fish2.stateTimer * 1.1 + roamSeed * 1.2) * (spread * 1);
         } else {
-          fish.targetX = baseX + Math.sin(fish.stateTimer * 0.8 + roamSeed) * spread;
-          fish.targetY = baseY + Math.cos(fish.stateTimer * 0.7 + roamSeed * 0.85) * (spread * 0.75);
-          fish.targetZ = baseZ + Math.sin(fish.stateTimer * 0.6 + roamSeed * 1.1) * (spread * 0.85);
+          fish2.targetX = baseX + Math.sin(fish2.stateTimer * 0.8 + roamSeed) * spread;
+          fish2.targetY = baseY + Math.cos(fish2.stateTimer * 0.7 + roamSeed * 0.85) * (spread * 0.75);
+          fish2.targetZ = baseZ + Math.sin(fish2.stateTimer * 0.6 + roamSeed * 1.1) * (spread * 0.85);
         }
-        fish.targetX = Math.max(0.08, Math.min(0.92, fish.targetX));
-        fish.targetY = Math.max(0.12, Math.min(0.88, fish.targetY));
-        fish.targetZ = Math.max(0.08, Math.min(0.92, fish.targetZ));
+        fish2.targetX = Math.max(0.08, Math.min(0.92, fish2.targetX));
+        fish2.targetY = Math.max(0.12, Math.min(0.88, fish2.targetY));
+        fish2.targetZ = Math.max(0.08, Math.min(0.92, fish2.targetZ));
         const moveSpeed = behavior === "darting" ? 0.14 : behavior === "cruising" ? 0.04 : behavior === "perching" ? 0.03 : 0.06;
-        fish.x += ((fish.targetX ?? fish.x) - fish.x) * moveSpeed;
-        fish.y += ((fish.targetY ?? fish.y) - fish.y) * moveSpeed;
-        fish.z += ((fish.targetZ ?? fish.z) - fish.z) * moveSpeed;
-        fish.vx = ((fish.targetX ?? fish.x) - fish.x) * moveSpeed;
-        fish.vy = ((fish.targetY ?? fish.y) - fish.y) * moveSpeed;
-        fish.vz = ((fish.targetZ ?? fish.z) - fish.z) * moveSpeed;
+        fish2.x += ((fish2.targetX ?? fish2.x) - fish2.x) * moveSpeed;
+        fish2.y += ((fish2.targetY ?? fish2.y) - fish2.y) * moveSpeed;
+        fish2.z += ((fish2.targetZ ?? fish2.z) - fish2.z) * moveSpeed;
+        fish2.vx = ((fish2.targetX ?? fish2.x) - fish2.x) * moveSpeed;
+        fish2.vy = ((fish2.targetY ?? fish2.y) - fish2.y) * moveSpeed;
+        fish2.vz = ((fish2.targetZ ?? fish2.z) - fish2.z) * moveSpeed;
         let healthChange = -0.04 * hoursPassed;
         if (w.temperature < 74 || w.temperature > 84)
           healthChange -= 1 * hoursPassed;
@@ -1766,37 +2305,38 @@
         if (w.nitrite > 0.25) healthChange -= 2 * hoursPassed;
         if (w.nitrate > 40) healthChange -= 0.5 * hoursPassed;
         if (w.dissolvedOxygen < 5.5) healthChange -= 0.8 * hoursPassed;
-        const daysUnfed = state.day - state.lastFed;
+        const daysUnfed = state.day - (fish2.lastMealDay ?? state.lastFed);
         if (daysUnfed > 3)
           healthChange -= (daysUnfed - 2) * 1.5 * hoursPassed;
-        else if (state.lastFed === state.day)
+        else if ((fish2.lastMealDay ?? state.lastFed) === state.day)
           healthChange += 0.18 * hoursPassed;
-        if (state.feedingsToday > 0 && state.lastFed === state.day)
+        if (state.feedingsToday > 0 && (fish2.lastMealDay ?? state.lastFed) === state.day)
           healthChange += 0.05 * hoursPassed;
         if (species === "tailspotblenny" && state.algaeLevel > 20)
           healthChange += 0.08 * hoursPassed;
         if (species === "yellowtang" && state.algaeLevel > 25)
           healthChange += 0.1 * hoursPassed;
-        if (species === "clownfish" && state.feedingsToday > 0)
+        if (species === "clownfish" && state.feedingsToday > 0 && (fish2.lastMealDay ?? state.lastFed) === state.day)
           healthChange += 0.04 * hoursPassed;
-        if (species === "banggaicardinal" && state.feedingsToday > 0)
+        if (species === "banggaicardinal" && state.feedingsToday > 0 && (fish2.lastMealDay ?? state.lastFed) === state.day)
           healthChange += 0.04 * hoursPassed;
-        if (fish.health < 90 && healthChange > 0)
+        if (fish2.health < 90 && healthChange > 0)
           healthChange += 0.03 * hoursPassed;
-        fish.health = Math.max(
+        fish2.health = Math.max(
           0,
-          Math.min(100, fish.health + healthChange)
+          Math.min(100, fish2.health + healthChange)
         );
-        if (fish.health <= 0) {
-          fish.alive = false;
+        if (fish2.health <= 0) {
+          fish2.alive = false;
           state.journal.push({
             time: `Day ${state.day} ${state.hour}:00`,
-            text: `\u2620\uFE0F ${fish.name} passed away due to poor environmental conditions.`,
+            text: `\u2620\uFE0F ${fish2.name} passed away due to poor environmental conditions.`,
             tip: "Maintain zero ammonia/nitrite, stable 78\xB0F temp, and 35 ppt salinity."
           });
         }
       });
       state.corals.forEach((coral) => {
+        if (coral.alive === false || coral.health <= 0) return;
         const tmpl = CORAL_DATABASE.find((c) => c.id === coral.templateId);
         let healthChange = 0;
         if (w.temperature < 75 || w.temperature > 83)
@@ -1972,7 +2512,7 @@
     static addCleanup(state, crewId) {
       const tmpl = CLEANUP_DATABASE.find((c) => c.id === crewId);
       if (!tmpl) return null;
-      const existing = state.cleanupCrew.find((c) => c.templateId === crewId);
+      const existing = state.cleanupCrew.find((c) => c.templateId === crewId && c.alive !== false && c.health !== 0);
       if (existing) {
         existing.count += tmpl.count;
         return existing;
@@ -2704,7 +3244,7 @@
     const uuid = _lut[d0 & 255] + _lut[d0 >> 8 & 255] + _lut[d0 >> 16 & 255] + _lut[d0 >> 24 & 255] + "-" + _lut[d1 & 255] + _lut[d1 >> 8 & 255] + "-" + _lut[d1 >> 16 & 15 | 64] + _lut[d1 >> 24 & 255] + "-" + _lut[d2 & 63 | 128] + _lut[d2 >> 8 & 255] + "-" + _lut[d2 >> 16 & 255] + _lut[d2 >> 24 & 255] + _lut[d3 & 255] + _lut[d3 >> 8 & 255] + _lut[d3 >> 16 & 255] + _lut[d3 >> 24 & 255];
     return uuid.toUpperCase();
   }
-  function clamp(value, min, max) {
+  function clamp2(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
   function euclideanModulo(n, m) {
@@ -2809,7 +3349,7 @@
     DEG2RAD,
     RAD2DEG,
     generateUUID,
-    clamp,
+    clamp: clamp2,
     euclideanModulo,
     mapLinear,
     inverseLerp,
@@ -4258,7 +4798,7 @@
       return this.normalize();
     }
     angleTo(q) {
-      return 2 * Math.acos(Math.abs(clamp(this.dot(q), -1, 1)));
+      return 2 * Math.acos(Math.abs(clamp2(this.dot(q), -1, 1)));
     }
     rotateTowards(q, step) {
       const angle = this.angleTo(q);
@@ -4729,7 +5269,7 @@
       const denominator = Math.sqrt(this.lengthSq() * v2.lengthSq());
       if (denominator === 0) return Math.PI / 2;
       const theta = this.dot(v2) / denominator;
-      return Math.acos(clamp(theta, -1, 1));
+      return Math.acos(clamp2(theta, -1, 1));
     }
     distanceTo(v2) {
       return Math.sqrt(this.distanceToSquared(v2));
@@ -4890,9 +5430,9 @@
     clone() {
       return new this.constructor().copy(this);
     }
-    copy(box) {
-      this.min.copy(box.min);
-      this.max.copy(box.max);
+    copy(box2) {
+      this.min.copy(box2.min);
+      this.max.copy(box2.max);
       return this;
     }
     makeEmpty() {
@@ -4952,8 +5492,8 @@
     containsPoint(point) {
       return point.x < this.min.x || point.x > this.max.x || point.y < this.min.y || point.y > this.max.y || point.z < this.min.z || point.z > this.max.z ? false : true;
     }
-    containsBox(box) {
-      return this.min.x <= box.min.x && box.max.x <= this.max.x && this.min.y <= box.min.y && box.max.y <= this.max.y && this.min.z <= box.min.z && box.max.z <= this.max.z;
+    containsBox(box2) {
+      return this.min.x <= box2.min.x && box2.max.x <= this.max.x && this.min.y <= box2.min.y && box2.max.y <= this.max.y && this.min.z <= box2.min.z && box2.max.z <= this.max.z;
     }
     getParameter(point, target) {
       if (target === void 0) {
@@ -4966,8 +5506,8 @@
         (point.z - this.min.z) / (this.max.z - this.min.z)
       );
     }
-    intersectsBox(box) {
-      return box.max.x < this.min.x || box.min.x > this.max.x || box.max.y < this.min.y || box.min.y > this.max.y || box.max.z < this.min.z || box.min.z > this.max.z ? false : true;
+    intersectsBox(box2) {
+      return box2.max.x < this.min.x || box2.min.x > this.max.x || box2.max.y < this.min.y || box2.min.y > this.max.y || box2.max.z < this.min.z || box2.min.z > this.max.z ? false : true;
     }
     intersectsSphere(sphere3) {
       this.clampPoint(sphere3.center, _vector$b);
@@ -5069,15 +5609,15 @@
       target.radius = this.getSize(_vector$b).length() * 0.5;
       return target;
     }
-    intersect(box) {
-      this.min.max(box.min);
-      this.max.min(box.max);
+    intersect(box2) {
+      this.min.max(box2.min);
+      this.max.min(box2.max);
       if (this.isEmpty()) this.makeEmpty();
       return this;
     }
-    union(box) {
-      this.min.min(box.min);
-      this.max.max(box.max);
+    union(box2) {
+      this.min.min(box2.min);
+      this.max.max(box2.max);
       return this;
     }
     applyMatrix4(matrix) {
@@ -5098,8 +5638,8 @@
       this.max.add(offset);
       return this;
     }
-    equals(box) {
-      return box.min.equals(this.min) && box.max.equals(this.max);
+    equals(box2) {
+      return box2.min.equals(this.min) && box2.max.equals(this.max);
     }
   };
   Box3.prototype.isBox3 = true;
@@ -5189,8 +5729,8 @@
       const radiusSum = this.radius + sphere3.radius;
       return sphere3.center.distanceToSquared(this.center) <= radiusSum * radiusSum;
     }
-    intersectsBox(box) {
-      return box.intersectsSphere(this);
+    intersectsBox(box2) {
+      return box2.intersectsSphere(this);
     }
     intersectsPlane(plane) {
       return Math.abs(plane.distanceToPoint(this.center)) <= this.radius;
@@ -5419,33 +5959,33 @@
       }
       return false;
     }
-    intersectBox(box, target) {
+    intersectBox(box2, target) {
       let tmin, tmax, tymin, tymax, tzmin, tzmax;
       const invdirx = 1 / this.direction.x, invdiry = 1 / this.direction.y, invdirz = 1 / this.direction.z;
       const origin = this.origin;
       if (invdirx >= 0) {
-        tmin = (box.min.x - origin.x) * invdirx;
-        tmax = (box.max.x - origin.x) * invdirx;
+        tmin = (box2.min.x - origin.x) * invdirx;
+        tmax = (box2.max.x - origin.x) * invdirx;
       } else {
-        tmin = (box.max.x - origin.x) * invdirx;
-        tmax = (box.min.x - origin.x) * invdirx;
+        tmin = (box2.max.x - origin.x) * invdirx;
+        tmax = (box2.min.x - origin.x) * invdirx;
       }
       if (invdiry >= 0) {
-        tymin = (box.min.y - origin.y) * invdiry;
-        tymax = (box.max.y - origin.y) * invdiry;
+        tymin = (box2.min.y - origin.y) * invdiry;
+        tymax = (box2.max.y - origin.y) * invdiry;
       } else {
-        tymin = (box.max.y - origin.y) * invdiry;
-        tymax = (box.min.y - origin.y) * invdiry;
+        tymin = (box2.max.y - origin.y) * invdiry;
+        tymax = (box2.min.y - origin.y) * invdiry;
       }
       if (tmin > tymax || tymin > tmax) return null;
       if (tymin > tmin || tmin !== tmin) tmin = tymin;
       if (tymax < tmax || tmax !== tmax) tmax = tymax;
       if (invdirz >= 0) {
-        tzmin = (box.min.z - origin.z) * invdirz;
-        tzmax = (box.max.z - origin.z) * invdirz;
+        tzmin = (box2.min.z - origin.z) * invdirz;
+        tzmax = (box2.max.z - origin.z) * invdirz;
       } else {
-        tzmin = (box.max.z - origin.z) * invdirz;
-        tzmax = (box.min.z - origin.z) * invdirz;
+        tzmin = (box2.max.z - origin.z) * invdirz;
+        tzmax = (box2.min.z - origin.z) * invdirz;
       }
       if (tmin > tzmax || tzmin > tmax) return null;
       if (tzmin > tmin || tmin !== tmin) tmin = tzmin;
@@ -5453,8 +5993,8 @@
       if (tmax < 0) return null;
       return this.at(tmin >= 0 ? tmin : tmax, target);
     }
-    intersectsBox(box) {
-      return this.intersectBox(box, _vector$a) !== null;
+    intersectsBox(box2) {
+      return this.intersectBox(box2, _vector$a) !== null;
     }
     intersectTriangle(a, b, c, backfaceCulling, target) {
       _edge1.subVectors(b, a);
@@ -6311,7 +6851,7 @@
       order = order || this._order;
       switch (order) {
         case "XYZ":
-          this._y = Math.asin(clamp(m13, -1, 1));
+          this._y = Math.asin(clamp2(m13, -1, 1));
           if (Math.abs(m13) < 0.9999999) {
             this._x = Math.atan2(-m23, m33);
             this._z = Math.atan2(-m12, m11);
@@ -6321,7 +6861,7 @@
           }
           break;
         case "YXZ":
-          this._x = Math.asin(-clamp(m23, -1, 1));
+          this._x = Math.asin(-clamp2(m23, -1, 1));
           if (Math.abs(m23) < 0.9999999) {
             this._y = Math.atan2(m13, m33);
             this._z = Math.atan2(m21, m22);
@@ -6331,7 +6871,7 @@
           }
           break;
         case "ZXY":
-          this._x = Math.asin(clamp(m32, -1, 1));
+          this._x = Math.asin(clamp2(m32, -1, 1));
           if (Math.abs(m32) < 0.9999999) {
             this._y = Math.atan2(-m31, m33);
             this._z = Math.atan2(-m12, m22);
@@ -6341,7 +6881,7 @@
           }
           break;
         case "ZYX":
-          this._y = Math.asin(-clamp(m31, -1, 1));
+          this._y = Math.asin(-clamp2(m31, -1, 1));
           if (Math.abs(m31) < 0.9999999) {
             this._x = Math.atan2(m32, m33);
             this._z = Math.atan2(m21, m11);
@@ -6351,7 +6891,7 @@
           }
           break;
         case "YZX":
-          this._z = Math.asin(clamp(m21, -1, 1));
+          this._z = Math.asin(clamp2(m21, -1, 1));
           if (Math.abs(m21) < 0.9999999) {
             this._x = Math.atan2(-m23, m22);
             this._y = Math.atan2(-m31, m11);
@@ -6361,7 +6901,7 @@
           }
           break;
         case "XZY":
-          this._z = Math.asin(-clamp(m12, -1, 1));
+          this._z = Math.asin(-clamp2(m12, -1, 1));
           if (Math.abs(m12) < 0.9999999) {
             this._x = Math.atan2(m32, m22);
             this._y = Math.atan2(m13, m11);
@@ -7016,8 +7556,8 @@
       const endSign = this.distanceToPoint(line.end);
       return startSign < 0 && endSign > 0 || endSign < 0 && startSign > 0;
     }
-    intersectsBox(box) {
-      return box.intersectsPlane(this);
+    intersectsBox(box2) {
+      return box2.intersectsPlane(this);
     }
     intersectsSphere(sphere3) {
       return sphere3.intersectsPlane(this);
@@ -7174,8 +7714,8 @@
     isFrontFacing(direction) {
       return _Triangle.isFrontFacing(this.a, this.b, this.c, direction);
     }
-    intersectsBox(box) {
-      return box.intersectsTriangle(this);
+    intersectsBox(box2) {
+      return box2.intersectsTriangle(this);
     }
     closestPointToPoint(p, target) {
       if (target === void 0) {
@@ -7718,8 +8258,8 @@
     }
     setHSL(h, s, l) {
       h = euclideanModulo(h, 1);
-      s = clamp(s, 0, 1);
-      l = clamp(l, 0, 1);
+      s = clamp2(s, 0, 1);
+      l = clamp2(l, 0, 1);
       if (s === 0) {
         this.r = this.g = this.b = l;
       } else {
@@ -9730,14 +10270,14 @@
         blending: NoBlending
       });
       material2.uniforms.tEquirect.value = texture;
-      const mesh = new Mesh(geometry, material2);
+      const mesh2 = new Mesh(geometry, material2);
       const currentMinFilter = texture.minFilter;
       if (texture.minFilter === LinearMipmapLinearFilter) texture.minFilter = LinearFilter;
       const camera = new CubeCamera(1, 10, this);
-      camera.update(renderer, mesh);
+      camera.update(renderer, mesh2);
       texture.minFilter = currentMinFilter;
-      mesh.geometry.dispose();
-      mesh.material.dispose();
+      mesh2.geometry.dispose();
+      mesh2.material.dispose();
       return this;
     }
     clear(renderer, color, depth, stencil) {
@@ -9825,13 +10365,13 @@
       }
       return true;
     }
-    intersectsBox(box) {
+    intersectsBox(box2) {
       const planes = this.planes;
       for (let i = 0; i < 6; i++) {
         const plane = planes[i];
-        _vector$7.x = plane.normal.x > 0 ? box.max.x : box.min.x;
-        _vector$7.y = plane.normal.y > 0 ? box.max.y : box.min.y;
-        _vector$7.z = plane.normal.z > 0 ? box.max.z : box.min.z;
+        _vector$7.x = plane.normal.x > 0 ? box2.max.x : box2.min.x;
+        _vector$7.y = plane.normal.y > 0 ? box2.max.y : box2.min.y;
+        _vector$7.z = plane.normal.z > 0 ? box2.max.z : box2.min.z;
         if (plane.distanceToPoint(_vector$7) < 0) {
           return false;
         }
@@ -15493,7 +16033,7 @@
       let framebufferScaleFactor = 1;
       let referenceSpace = null;
       let referenceSpaceType = "local-floor";
-      let pose = null;
+      let pose2 = null;
       const controllers = [];
       const inputSourcesMap = /* @__PURE__ */ new Map();
       const cameraL = new PerspectiveCamera();
@@ -15695,9 +16235,9 @@
       };
       let onAnimationFrameCallback = null;
       function onAnimationFrame(time, frame) {
-        pose = frame.getViewerPose(referenceSpace);
-        if (pose !== null) {
-          const views = pose.views;
+        pose2 = frame.getViewerPose(referenceSpace);
+        if (pose2 !== null) {
+          const views = pose2.views;
           const baseLayer = session.renderState.baseLayer;
           state.bindXRFramebuffer(baseLayer.framebuffer);
           let cameraVRNeedsUpdate = false;
@@ -18590,12 +19130,12 @@
           v2[i] = [];
           const aj = a.clone().lerp(c, i / cols);
           const bj = b.clone().lerp(c, i / cols);
-          const rows = cols - i;
-          for (let j = 0; j <= rows; j++) {
+          const rows2 = cols - i;
+          for (let j = 0; j <= rows2; j++) {
             if (j === 0 && i === cols) {
               v2[i][j] = aj;
             } else {
-              v2[i][j] = aj.clone().lerp(bj, j / rows);
+              v2[i][j] = aj.clone().lerp(bj, j / rows2);
             }
           }
         }
@@ -19905,7 +20445,7 @@
         phiLength
       };
       segments = Math.floor(segments);
-      phiLength = clamp(phiLength, 0, Math.PI * 2);
+      phiLength = clamp2(phiLength, 0, Math.PI * 2);
       const indices = [];
       const vertices = [];
       const uvs = [];
@@ -20766,7 +21306,7 @@
           return (1 + 0.4 * this.reflectivity) / (1 - 0.4 * this.reflectivity);
         },
         set: function(ior) {
-          this.reflectivity = clamp(2.5 * (ior - 1) / (ior + 1), 0, 1);
+          this.reflectivity = clamp2(2.5 * (ior - 1) / (ior + 1), 0, 1);
         }
       });
       this.sheen = null;
@@ -22667,7 +23207,7 @@
       const normals = [];
       const binormals = [];
       const vec2 = new Vector3();
-      const mat2 = new Matrix4();
+      const mat3 = new Matrix4();
       for (let i = 0; i <= segments; i++) {
         const u = i / segments;
         tangents[i] = this.getTangentAt(u, new Vector3());
@@ -22699,19 +23239,19 @@
         vec2.crossVectors(tangents[i - 1], tangents[i]);
         if (vec2.length() > Number.EPSILON) {
           vec2.normalize();
-          const theta = Math.acos(clamp(tangents[i - 1].dot(tangents[i]), -1, 1));
-          normals[i].applyMatrix4(mat2.makeRotationAxis(vec2, theta));
+          const theta = Math.acos(clamp2(tangents[i - 1].dot(tangents[i]), -1, 1));
+          normals[i].applyMatrix4(mat3.makeRotationAxis(vec2, theta));
         }
         binormals[i].crossVectors(tangents[i], normals[i]);
       }
       if (closed === true) {
-        let theta = Math.acos(clamp(normals[0].dot(normals[segments]), -1, 1));
+        let theta = Math.acos(clamp2(normals[0].dot(normals[segments]), -1, 1));
         theta /= segments;
         if (tangents[0].dot(vec2.crossVectors(normals[0], normals[segments])) > 0) {
           theta = -theta;
         }
         for (let i = 1; i <= segments; i++) {
-          normals[i].applyMatrix4(mat2.makeRotationAxis(tangents[i], theta * i));
+          normals[i].applyMatrix4(mat3.makeRotationAxis(tangents[i], theta * i));
           binormals[i].crossVectors(tangents[i], normals[i]);
         }
       }
@@ -27584,7 +28124,7 @@
         this.phi = 0;
       } else {
         this.theta = Math.atan2(x, z);
-        this.phi = Math.acos(clamp(y / this.radius, -1, 1));
+        this.phi = Math.acos(clamp2(y / this.radius, -1, 1));
       }
       return this;
     }
@@ -27651,9 +28191,9 @@
     clone() {
       return new this.constructor().copy(this);
     }
-    copy(box) {
-      this.min.copy(box.min);
-      this.max.copy(box.max);
+    copy(box2) {
+      this.min.copy(box2.min);
+      this.max.copy(box2.max);
       return this;
     }
     makeEmpty() {
@@ -27696,8 +28236,8 @@
     containsPoint(point) {
       return point.x < this.min.x || point.x > this.max.x || point.y < this.min.y || point.y > this.max.y ? false : true;
     }
-    containsBox(box) {
-      return this.min.x <= box.min.x && box.max.x <= this.max.x && this.min.y <= box.min.y && box.max.y <= this.max.y;
+    containsBox(box2) {
+      return this.min.x <= box2.min.x && box2.max.x <= this.max.x && this.min.y <= box2.min.y && box2.max.y <= this.max.y;
     }
     getParameter(point, target) {
       if (target === void 0) {
@@ -27709,8 +28249,8 @@
         (point.y - this.min.y) / (this.max.y - this.min.y)
       );
     }
-    intersectsBox(box) {
-      return box.max.x < this.min.x || box.min.x > this.max.x || box.max.y < this.min.y || box.min.y > this.max.y ? false : true;
+    intersectsBox(box2) {
+      return box2.max.x < this.min.x || box2.min.x > this.max.x || box2.max.y < this.min.y || box2.min.y > this.max.y ? false : true;
     }
     clampPoint(point, target) {
       if (target === void 0) {
@@ -27723,14 +28263,14 @@
       const clampedPoint = _vector$4.copy(point).clamp(this.min, this.max);
       return clampedPoint.sub(point).length();
     }
-    intersect(box) {
-      this.min.max(box.min);
-      this.max.min(box.max);
+    intersect(box2) {
+      this.min.max(box2.min);
+      this.max.min(box2.max);
       return this;
     }
-    union(box) {
-      this.min.min(box.min);
-      this.max.max(box.max);
+    union(box2) {
+      this.min.min(box2.min);
+      this.max.max(box2.max);
       return this;
     }
     translate(offset) {
@@ -27738,8 +28278,8 @@
       this.max.add(offset);
       return this;
     }
-    equals(box) {
-      return box.min.equals(this.min) && box.max.equals(this.max);
+    equals(box2) {
+      return box2.min.equals(this.min) && box2.max.equals(this.max);
     }
   };
   Box2.prototype.isBox2 = true;
@@ -27794,7 +28334,7 @@
       const startEnd_startP = _startEnd.dot(_startP);
       let t = startEnd_startP / startEnd2;
       if (clampToLine) {
-        t = clamp(t, 0, 1);
+        t = clamp2(t, 0, 1);
       }
       return t;
     }
@@ -28027,11 +28567,11 @@
       this.children[0].material.dispose();
     }
     update() {
-      const mesh = this.children[0];
+      const mesh2 = this.children[0];
       if (this.color !== void 0) {
         this.material.color.set(this.color);
       } else {
-        const colors = mesh.geometry.getAttribute("color");
+        const colors = mesh2.geometry.getAttribute("color");
         _color1.copy(this.light.color);
         _color2.copy(this.light.groundColor);
         for (let i = 0, l = colors.count; i < l; i++) {
@@ -28040,7 +28580,7 @@
         }
         colors.needsUpdate = true;
       }
-      mesh.lookAt(_vector$1.setFromMatrixPosition(this.light.matrixWorld).negate());
+      mesh2.lookAt(_vector$1.setFromMatrixPosition(this.light.matrixWorld).negate());
     }
   };
   var GridHelper = class extends LineSegments {
@@ -28343,22 +28883,22 @@
     }
   };
   var Box3Helper = class extends LineSegments {
-    constructor(box, color = 16776960) {
+    constructor(box2, color = 16776960) {
       const indices = new Uint16Array([0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]);
       const positions = [1, 1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1, 1, 1, -1, -1, 1, -1, -1, -1, -1, 1, -1, -1];
       const geometry = new BufferGeometry();
       geometry.setIndex(new BufferAttribute(indices, 1));
       geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
       super(geometry, new LineBasicMaterial({ color, toneMapped: false }));
-      this.box = box;
+      this.box = box2;
       this.type = "Box3Helper";
       this.geometry.computeBoundingSphere();
     }
     updateMatrixWorld(force) {
-      const box = this.box;
-      if (box.isEmpty()) return;
-      box.getCenter(this.position);
-      box.getSize(this.scale);
+      const box2 = this.box;
+      if (box2.isEmpty()) return;
+      box2.getCenter(this.position);
+      box2.getSize(this.scale);
       this.scale.multiplyScalar(0.5);
       super.updateMatrixWorld(force);
     }
@@ -28749,7 +29289,7 @@
         }
       }
       const material2 = texture.isCubeTexture ? this._cubemapShader : this._equirectShader;
-      const mesh = new Mesh(_lodPlanes[0], material2);
+      const mesh2 = new Mesh(_lodPlanes[0], material2);
       const uniforms = material2.uniforms;
       uniforms["envMap"].value = texture;
       if (!texture.isCubeTexture) {
@@ -28759,7 +29299,7 @@
       uniforms["outputEncoding"].value = ENCODINGS[cubeUVRenderTarget.texture.encoding];
       _setViewport(cubeUVRenderTarget, 0, 0, 3 * SIZE_MAX, 2 * SIZE_MAX);
       renderer.setRenderTarget(cubeUVRenderTarget);
-      renderer.render(mesh, _flatCamera);
+      renderer.render(mesh2, _flatCamera);
     }
     _applyPMREM(cubeUVRenderTarget) {
       const renderer = this._renderer;
@@ -29417,9 +29957,9 @@
     console.warn("THREE.Box2: .empty() has been renamed to .isEmpty().");
     return this.isEmpty();
   };
-  Box2.prototype.isIntersectionBox = function(box) {
+  Box2.prototype.isIntersectionBox = function(box2) {
     console.warn("THREE.Box2: .isIntersectionBox() has been renamed to .intersectsBox().");
-    return this.intersectsBox(box);
+    return this.intersectsBox(box2);
   };
   Box2.prototype.size = function(optionalTarget) {
     console.warn("THREE.Box2: .size() has been renamed to .getSize().");
@@ -29433,9 +29973,9 @@
     console.warn("THREE.Box3: .empty() has been renamed to .isEmpty().");
     return this.isEmpty();
   };
-  Box3.prototype.isIntersectionBox = function(box) {
+  Box3.prototype.isIntersectionBox = function(box2) {
     console.warn("THREE.Box3: .isIntersectionBox() has been renamed to .intersectsBox().");
-    return this.intersectsBox(box);
+    return this.intersectsBox(box2);
   };
   Box3.prototype.isIntersectionSphere = function(sphere3) {
     console.warn("THREE.Box3: .isIntersectionSphere() has been renamed to .intersectsSphere().");
@@ -29559,9 +30099,9 @@
     console.warn("THREE.Quaternion: .inverse() has been renamed to invert().");
     return this.invert();
   };
-  Ray.prototype.isIntersectionBox = function(box) {
+  Ray.prototype.isIntersectionBox = function(box2) {
     console.warn("THREE.Ray: .isIntersectionBox() has been renamed to .intersectsBox().");
-    return this.intersectsBox(box);
+    return this.intersectsBox(box2);
   };
   Ray.prototype.isIntersectionPlane = function(plane) {
     console.warn("THREE.Ray: .isIntersectionPlane() has been renamed to .intersectsPlane().");
@@ -31272,416 +31812,577 @@
   };
   var TextureGenerator_default = TextureGenerator;
 
+  // js/graphics/PhysicalEnvironment.js
+  var labels = /* @__PURE__ */ new Map();
+  var mat = (color, extra = {}) => new MeshStandardMaterial({ color, roughness: 0.65, ...extra });
+  function mesh(parent, geometry, material2, p = [0, 0, 0]) {
+    const object = new Mesh(geometry, material2);
+    object.position.set(...p);
+    object.castShadow = true;
+    object.receiveShadow = true;
+    parent.add(object);
+    return object;
+  }
+  var box = (g, m, size, p) => mesh(g, new BoxGeometry(...size), m, p);
+  var cylinder = (g, m, r, h, p, top = r) => mesh(g, new CylinderGeometry(top, r, h, 24), m, p);
+  function hose(g, points, radius = 3e-3, color = 3160896) {
+    return mesh(
+      g,
+      new TubeGeometry(
+        new CatmullRomCurve3(
+          points.map((p) => new Vector3(...p))
+        ),
+        20,
+        radius,
+        6,
+        false
+      ),
+      mat(color)
+    );
+  }
+  function label(g, text, width, p) {
+    if (typeof document === "undefined") return;
+    let texture = labels.get(text);
+    if (!texture) {
+      const c = document.createElement("canvas");
+      c.width = 256;
+      c.height = 64;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#122435";
+      ctx.fillRect(0, 0, 256, 64);
+      ctx.font = "bold 28px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#d6f8ff";
+      ctx.fillText(text, 128, 32, 244);
+      texture = new CanvasTexture(c);
+      texture.encoding = sRGBEncoding;
+      labels.set(text, texture);
+    }
+    mesh(
+      g,
+      new PlaneGeometry(width, width / 4),
+      new MeshBasicMaterial({ map: texture, side: DoubleSide }),
+      p
+    ).castShadow = false;
+  }
+  function footprintShape(spec) {
+    const shape = new Shape();
+    tankOutline(spec).forEach(
+      (p, i) => i ? shape.lineTo(p.x, -p.z) : shape.moveTo(p.x, -p.z)
+    );
+    shape.closePath();
+    return shape;
+  }
+  function horizontalGeometry(spec, thickness = 0) {
+    const geo = thickness > 0 ? new ExtrudeGeometry(footprintShape(spec), {
+      depth: thickness,
+      bevelEnabled: false,
+      steps: 1
+    }) : new ShapeGeometry(footprintShape(spec), 48);
+    geo.rotateX(-Math.PI / 2);
+    return geo;
+  }
+  function glassWalls(spec, material2) {
+    const points = tankOutline(spec), positions = [], indices = [];
+    for (const p of points)
+      positions.push(p.x, -spec.height / 2, p.z, p.x, spec.height / 2, p.z);
+    for (let i = 0; i < points.length; i++) {
+      const n = (i + 1) % points.length;
+      indices.push(i * 2, n * 2, i * 2 + 1, n * 2, n * 2 + 1, i * 2 + 1);
+    }
+    const geo = new BufferGeometry();
+    geo.setAttribute(
+      "position",
+      new Float32BufferAttribute(positions, 3)
+    );
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return new Mesh(geo, material2);
+  }
+  function equipment(parent, state, s, floor) {
+    const eq = state.equipment, w = s.width, h = s.height, d = s.depth;
+    const black = mat(1581869, { roughness: 0.35 }), silver = mat(10794174, { metalness: 0.85, roughness: 0.25 }), blue = mat(1472677), red = mat(13385542);
+    const clear = mat(12184575, {
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
+      side: DoubleSide
+    });
+    const group = (id) => {
+      const g = new Group();
+      g.userData = { isEnv: true, type: id, equipmentId: id };
+      parent.add(g);
+      return g;
+    };
+    const attach = (g, x, y, z, margin = 0.04) => {
+      const p = constrainPoint(s, { x, y, z }, margin);
+      g.position.set(p.x, p.y, p.z);
+    };
+    if (eq.heater) {
+      const g = group("heater"), length = Math.min(0.27, h * 0.65);
+      cylinder(g, silver, 0.012, length);
+      cylinder(g, black, 0.017, 0.035, [0, length / 2, 0]);
+      for (const y of [-length * 0.32, length * 0.32]) {
+        const cup = cylinder(g, black, 0.021, 0.01, [0, y, -0.02]);
+        cup.rotation.x = Math.PI / 2;
+      }
+      mesh(
+        g,
+        new SphereGeometry(4e-3, 8, 6),
+        new MeshBasicMaterial({
+          color: eq.heaterOn ? 16729378 : 2635069
+        }),
+        [0, length / 2, 0.017]
+      );
+      attach(g, -w * 0.38, -0.015, -d * 0.4);
+      hose(
+        g,
+        [
+          [0, length / 2 + 0.015, 0],
+          [0, h / 2 - g.position.y + 0.04, -0.02],
+          [0.04, h / 2 - g.position.y + 0.04, -0.05]
+        ],
+        2e-3
+      );
+      label(g, "HEATER", 0.065, [0, -length * 0.18, 0.013]);
+    }
+    for (const id of ["powerhead", "wavemaker"])
+      if (eq[id]) {
+        const g = group(id), r = Math.min(0.035, d * 0.1);
+        cylinder(g, black, r, 0.018).rotation.z = Math.PI / 2;
+        cylinder(g, black, r * 0.88, 0.042, [0.027, 0, 0]).rotation.z = Math.PI / 2;
+        for (let i = 0; i < 12; i++) {
+          const a = i / 12 * Math.PI * 2;
+          box(
+            g,
+            silver,
+            [0.043, 25e-4, 3e-3],
+            [0.035, Math.cos(a) * r * 0.92, Math.sin(a) * r * 0.92]
+          ).rotation.x = a;
+        }
+        mesh(
+          g,
+          new TorusGeometry(r * 0.92, 3e-3, 6, 24),
+          black,
+          [0.057, 0, 0]
+        ).rotation.y = Math.PI / 2;
+        mesh(
+          g,
+          new CircleGeometry(r * 0.6, 3),
+          blue,
+          [0.06, 0, 0]
+        ).rotation.y = Math.PI / 2;
+        attach(
+          g,
+          id === "powerhead" ? -w * 0.46 : w * 0.46,
+          h * 0.24,
+          0,
+          0.035
+        );
+        if (id === "wavemaker") g.rotation.y = Math.PI;
+        label(
+          g,
+          id === "powerhead" ? "FLOW" : "WAVE",
+          0.055,
+          [0, -0.05, 0.02]
+        );
+      }
+    if (eq.proteinSkimmer) {
+      const g = group("proteinSkimmer"), height = Math.min(0.28, h * 0.65), r = Math.min(0.035, d * 0.1);
+      cylinder(g, clear, r, height, [0, height / 2, 0]);
+      cylinder(g, clear, r, 0.045, [0, height + 0.022, 0], r * 0.44);
+      cylinder(g, clear, r * 1.15, 0.055, [0, height + 0.07, 0]);
+      cylinder(g, black, r * 1.2, 7e-3, [0, height + 0.1, 0]);
+      cylinder(
+        g,
+        mat(10192976, { transparent: true, opacity: 0.7 }),
+        r * 0.98,
+        0.015,
+        [0, height + 0.06, 0]
+      );
+      box(g, red, [r * 2.3, 0.016, r * 2.3], [0, 0, 0]);
+      box(g, black, [0.045, 0.035, 0.035], [r + 0.02, 0.025, 0]);
+      hose(
+        g,
+        [
+          [r + 0.02, 0.04, 0],
+          [r + 0.035, height + 0.05, 0],
+          [0, height + 0.07, 0]
+        ],
+        25e-4,
+        14278625
+      );
+      attach(g, w * 0.37, floor + 0.025, -d * 0.3, 0.075);
+      label(g, "SKIMMER", 0.075, [0, height * 0.55, r + 2e-3]);
+    }
+    if (eq.lightBasic || eq.lightReef) {
+      const g = group(eq.lightReef ? "lightReef" : "lightBasic"), length = w * 0.76, depth = Math.min(0.12, d * 0.4);
+      box(g, black, [length, 0.025, depth], [0, h / 2 + 0.08, 0]);
+      for (let i = 0; i < 10; i++)
+        box(
+          g,
+          silver,
+          [3e-3, 9e-3, depth * 0.9],
+          [-length / 2 + length * (i + 0.5) / 10, h / 2 + 0.097, 0]
+        );
+      const led = new MeshBasicMaterial({
+        color: eq.lightOn ? eq.lightReef ? 10540031 : 16772548 : 3817804
+      });
+      for (let i = 0; i < 12; i++)
+        cylinder(g, led, 6e-3, 2e-3, [
+          -length / 2 + length * (i + 0.5) / 12,
+          h / 2 + 0.066,
+          0
+        ]).castShadow = false;
+      for (const side of [-1, 1])
+        box(
+          g,
+          black,
+          [0.01, 0.09, 0.055],
+          [side * w * 0.4, h / 2 + 0.03, 0]
+        );
+      label(g, eq.lightReef ? "REEF LED" : "DAYLIGHT", 0.12, [
+        0,
+        h / 2 + 0.081,
+        depth / 2 + 1e-3
+      ]);
+      g.traverse((object) => {
+        object.castShadow = false;
+      });
+    }
+    if (eq.returnPump) {
+      const g = group("returnPump"), p = constrainPoint(
+        s,
+        { x: w * 0.3, y: floor + 0.035, z: -d * 0.32 },
+        0.05
+      );
+      box(g, black, [0.06, 0.05, 0.045], [p.x, p.y, p.z]);
+      hose(
+        g,
+        [
+          [p.x, p.y + 0.02, p.z],
+          [p.x, waterLevel(s) - 0.03, p.z],
+          [p.x - 0.08, waterLevel(s) - 0.03, p.z + 0.025]
+        ],
+        9e-3
+      );
+      label(g, "RETURN", 0.055, [p.x, p.y, p.z + 0.023]);
+    }
+    if (eq.thermometer) {
+      const g = group("thermometer");
+      attach(g, w * 0.33, h * 0.16, d * 0.45, 0.015);
+      box(g, black, [0.035, 0.055, 8e-3], [0, 0, 0]);
+      label(g, "TEMP", 0.029, [0, 8e-3, 5e-3]);
+    }
+    if (eq.autoTopOff) {
+      const g = group("autoTopOff");
+      attach(g, w * 0.36, waterLevel(s) - 0.025, -d * 0.4, 0.025);
+      cylinder(g, blue, 9e-3, 0.022);
+      hose(
+        g,
+        [
+          [0, 0.01, 0],
+          [0, 0.1, -0.01],
+          [0.04, 0.12, -0.03]
+        ],
+        2e-3
+      );
+      label(g, "ATO", 0.035, [0, -0.025, 0.012]);
+    }
+    const outer = w / 2 + 0.075;
+    if (eq.dosingPump) {
+      const g = group("dosingPump");
+      box(g, black, [0.14, 0.065, 0.055], [outer + 0.035, -h / 2 - 0.09, 0]);
+      for (let i = 0; i < 3; i++) {
+        cylinder(g, i === 0 ? blue : i === 1 ? red : silver, 0.016, 0.01, [
+          outer - 0.012 + i * 0.045,
+          -h / 2 - 0.09,
+          0.033
+        ]).rotation.x = Math.PI / 2;
+        hose(
+          g,
+          [
+            [outer - 0.012 + i * 0.045, -h / 2 - 0.09, 0.04],
+            [outer + i * 0.01, h / 2 + 0.025, -0.02],
+            [w * 0.3 + i * 0.015, waterLevel(s), -0.03]
+          ],
+          15e-4,
+          [7654399, 16749723, 11987135][i]
+        );
+      }
+      label(g, "DOSING", 0.1, [outer + 0.035, -h / 2 - 0.065, 0.03]);
+    }
+    if (eq.sump) {
+      const g = group("sump"), sw = w * 0.65, sd = Math.min(d * 0.75, 0.35);
+      box(g, clear, [sw, 0.2, sd], [0, -h / 2 - 0.3, 0]);
+      box(
+        g,
+        mat(2384504, { transparent: true, opacity: 0.28 }),
+        [sw - 0.01, 0.1, sd - 0.01],
+        [0, -h / 2 - 0.34, 0]
+      );
+      for (const x of [-sw * 0.18, sw * 0.18])
+        box(g, clear, [4e-3, 0.15, sd - 6e-3], [x, -h / 2 - 0.28, 0]);
+      label(g, "SUMP", 0.1, [0, -h / 2 - 0.23, sd / 2 + 1e-3]);
+    }
+    for (const [i, id] of ["mediaReactor", "uvSterilizer"].entries())
+      if (eq[id]) {
+        const g = group(id), x = outer + 0.04, z = -d * 0.2 + i * 0.11;
+        cylinder(g, id === "mediaReactor" ? clear : black, 0.025, 0.19, [
+          x,
+          -h / 2 - 0.24,
+          z
+        ]);
+        cylinder(g, blue, 0.029, 0.012, [x, -h / 2 - 0.14, z]);
+        cylinder(g, black, 0.029, 0.012, [x, -h / 2 - 0.34, z]);
+        if (id === "mediaReactor")
+          cylinder(g, mat(6242610), 0.02, 0.12, [x, -h / 2 - 0.27, z]);
+        hose(
+          g,
+          [
+            [x, -h / 2 - 0.14, z],
+            [x, -h / 2 - 0.1, z - 0.02],
+            [w * 0.3, -h / 2 - 0.1, z - 0.02]
+          ],
+          4e-3
+        );
+        label(g, id === "mediaReactor" ? "MEDIA" : "UV", 0.055, [
+          x,
+          -h / 2 - 0.23,
+          z + 0.026
+        ]);
+      }
+    if (eq.macroAlgae) {
+      const g = group("macroAlgae"), y = eq.sump ? -h / 2 - 0.32 : floor + 0.045, x = eq.sump ? 0 : -w * 0.32;
+      for (let i = 0; i < 16; i++) {
+        const ring = mesh(
+          g,
+          new TorusGeometry(0.019, 18e-4, 5, 18),
+          mat(4034901),
+          [
+            x + Math.sin(i * 2.4) * 0.025,
+            y + Math.cos(i * 1.8) * 0.023,
+            Math.cos(i * 2.4) * 0.025
+          ]
+        );
+        ring.rotation.set(i * 0.42, i * 0.75, 0);
+      }
+    }
+    if (eq.quarantineTank) {
+      const g = group("quarantineTank"), x = w / 2 + 0.31, y = -h / 2 - 0.22;
+      box(g, clear, [0.4, 0.25, 0.22], [x, y, 0]);
+      box(g, black, [0.405, 0.012, 0.225], [x, y - 0.125, 0]);
+      cylinder(g, mat(14935775), 0.027, 0.07, [x, y - 0.095, 0]).rotation.z = Math.PI / 2;
+      label(g, "QUARANTINE", 0.15, [x, y + 0.07, 0.111]);
+    }
+    if (eq.rodiUnit) {
+      const g = group("rodiUnit");
+      for (let i = 0; i < 3; i++)
+        cylinder(g, i === 0 ? blue : mat(15789798), 0.023, 0.14, [
+          outer + i * 0.052,
+          -h / 2 - 0.45,
+          0
+        ]);
+      box(g, black, [0.17, 0.015, 0.055], [outer + 0.052, -h / 2 - 0.37, 0]);
+      label(g, "RO / DI", 0.12, [outer + 0.052, -h / 2 - 0.39, 0.03]);
+    }
+    for (const [i, id] of ["testKit", "refractometer", "saltMix"].entries())
+      if (eq[id]) {
+        const g = group(id), x = -w / 2 + 0.08 + i * 0.12, y = -h / 2 - 0.55;
+        if (id === "saltMix") {
+          cylinder(g, mat(15460316), 0.035, 0.085, [x, y, 0]);
+          cylinder(g, blue, 0.038, 7e-3, [x, y + 0.043, 0]);
+        } else
+          box(
+            g,
+            id === "testKit" ? blue : black,
+            [0.09, 0.035, 0.055],
+            [x, y, 0]
+          );
+        label(
+          g,
+          id === "testKit" ? "TEST KIT" : id === "saltMix" ? "REEF SALT" : "SALINITY",
+          0.078,
+          [x, y, 0.036]
+        );
+      }
+  }
+  function buildPhysicalEnvironment(state) {
+    const spec = getTankSpec(state), eq = state.equipment, group = new Group();
+    group.userData = {
+      isEnv: true,
+      type: "environment",
+      units: "meters",
+      tankSpec: spec
+    };
+    const floor = -spec.height / 2, sandDepth = substrateHeight(state), surface = floor + sandDepth, black = mat(1319213);
+    if (eq.tank || eq.stand) {
+      box(
+        group,
+        black,
+        [spec.width + 0.035, 0.025, spec.depth + 0.035],
+        [0, floor - 0.02, 0]
+      );
+      box(
+        group,
+        black,
+        [spec.width + 0.035, 0.025, spec.depth + 0.035],
+        [0, floor - 0.62, 0]
+      );
+      for (const x of [-1, 1])
+        for (const z of [-1, 1])
+          box(
+            group,
+            black,
+            [0.032, 0.6, 0.032],
+            [x * spec.width / 2, floor - 0.32, z * spec.depth / 2]
+          );
+    }
+    if (!eq.tank) return group;
+    const glass = mat(10209500, {
+      transparent: true,
+      opacity: 0.085,
+      depthWrite: false,
+      roughness: 0.12,
+      side: DoubleSide
+    });
+    const walls = glassWalls(spec, glass);
+    walls.userData = { isEnv: true, type: "glass" };
+    walls.castShadow = false;
+    group.add(walls);
+    const bottom = mesh(group, horizontalGeometry(spec, 6e-3), mat(2440004), [
+      0,
+      floor - 6e-3,
+      0
+    ]);
+    bottom.userData = { isEnv: true, type: "bottom", placementSurface: true };
+    for (const y of [floor, spec.height / 2]) {
+      const points = tankOutline(spec).map(
+        (p) => new Vector3(p.x, y, p.z)
+      );
+      points.push(points[0].clone());
+      const rim = mesh(
+        group,
+        new TubeGeometry(
+          new CatmullRomCurve3(points, false, "catmullrom", 0),
+          points.length * 2,
+          3e-3,
+          6,
+          false
+        ),
+        black
+      );
+      rim.userData = { isEnv: true, type: "rim" };
+    }
+    if (sandDepth > 0) {
+      const lit = (eq.lightBasic || eq.lightReef) && eq.lightOn;
+      const m = mat(13943459, {
+        roughness: 0.96,
+        emissive: 9088701,
+        emissiveIntensity: lit ? 0.1 : 0
+      });
+      if (typeof document !== "undefined") {
+        m.emissiveMap = TextureGenerator_default.causticsTexture();
+        m.emissiveMap.repeat.set(spec.width / 0.18, spec.depth / 0.18);
+      }
+      const sand = mesh(group, horizontalGeometry(spec, sandDepth), m, [
+        0,
+        floor,
+        0
+      ]);
+      sand.userData = {
+        isEnv: true,
+        type: "sand",
+        isSand: true,
+        placementSurface: true
+      };
+    }
+    if (eq.liveRock > 0) {
+      const rocks = new Group();
+      rocks.userData = { isEnv: true, type: "rocks" };
+      group.add(rocks);
+      state.placedItems ||= [];
+      if (!state.aquascapeInitialized) {
+        if (!state.placedItems.some((i) => i.kind === "rock"))
+          state.placedItems.push(...defaultRockPlacements(spec, surface));
+        state.aquascapeInitialized = true;
+      }
+      for (const item of state.placedItems.filter((i) => i.kind === "rock")) {
+        const size = Math.max(
+          0.025,
+          Math.min(0.5, Number(item.size) || 0.12)
+        );
+        const geo = new DodecahedronGeometry(size / 2, 2);
+        geo.scale(1, 0.8, 0.78);
+        geo.computeBoundingBox();
+        geo.translate(0, -geo.boundingBox.min.y, 0);
+        const m = mat(state.cycleComplete ? 9137797 : 9538426, {
+          roughness: 1
+        });
+        if (typeof document !== "undefined")
+          m.map = TextureGenerator_default.mottleTexture(
+            state.cycleComplete ? "physical-coralline" : "physical-rock",
+            state.cycleComplete ? 9137797 : 9538426,
+            [7629924, 12891552, 6838133],
+            { count: 36, alpha: 0.28, speckle: 350 }
+          );
+        const rock = mesh(rocks, geo, m, [
+          item.position.x,
+          item.position.y,
+          item.position.z
+        ]);
+        const n = new Vector3(
+          item.normal?.x || 0,
+          item.normal?.y ?? 1,
+          item.normal?.z || 0
+        ).normalize();
+        rock.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), n);
+        rock.rotateY(Number(item.rotation) || 0);
+        rock.userData = {
+          isEnv: true,
+          type: "rock",
+          placementSurface: true,
+          placedItemId: item.id,
+          id: item.id,
+          diameterMeters: size
+        };
+      }
+    }
+    equipment(group, state, spec, surface);
+    group.updateMatrixWorld(true);
+    return group;
+  }
+
   // js/graphics/TankBuilder.js
-  var TankBuilder = class _TankBuilder {
+  var TankBuilder = class {
     static buildEnvironment(scene, state) {
       if (!scene || !state) return;
-      const eq = state.equipment;
-      const config = { width: 6, height: 3, depth: 3 };
-      const envSignature = (eq.tank ? 1 : 0) + "|" + (eq.stand ? 1 : 0) + "|" + (eq.substrate || 0) + "|" + (eq.liveRock || 0) + "|" + (eq.heater ? 1 : 0) + "|" + (eq.heaterOn ? 1 : 0) + "|" + (eq.powerhead ? 1 : 0) + "|" + (eq.wavemaker ? 1 : 0) + "|" + (eq.proteinSkimmer ? 1 : 0) + "|" + (eq.lightBasic ? 1 : 0) + "|" + (eq.lightReef ? 1 : 0) + "|" + (state.equipment.lightOn ? 1 : 0) + "|" + (eq.sump ? 1 : 0) + "|" + (eq.autoTopOff ? 1 : 0) + "|" + (eq.dosingPump ? 1 : 0) + "|" + (eq.quarantineTank ? 1 : 0) + "|" + (eq.macroAlgae ? 1 : 0) + "|" + (state.cycleComplete || state.cycleDay > 15 ? 1 : 0);
-      scene.userData = scene.userData || {};
-      if (scene.userData.tankEnvironmentSignature === envSignature && scene.userData.tankEnvironmentGroup) {
+      const signature = JSON.stringify([
+        getTankSpec(state),
+        state.equipment,
+        (state.placedItems || []).filter((item) => item.kind === "rock"),
+        Boolean(state.aquascapeInitialized),
+        state.cycleComplete
+      ]);
+      if (scene.userData.tankEnvironmentSignature === signature && scene.userData.tankEnvironmentGroup)
         return;
+      const old = scene.userData.tankEnvironmentGroup;
+      if (old) {
+        scene.remove(old);
+        this.disposeGroup(old);
       }
-      if (scene.userData.tankEnvironmentGroup) {
-        scene.remove(scene.userData.tankEnvironmentGroup);
-        _TankBuilder.disposeGroup(scene.userData.tankEnvironmentGroup);
-      }
-      const envGroup = new Group();
-      envGroup.userData = { isEnv: true, type: "environment" };
-      scene.userData.tankEnvironmentSignature = envSignature;
-      scene.userData.tankEnvironmentGroup = envGroup;
-      const seededRandom2 = (seed) => {
-        const x = Math.sin(seed * 999.1) * 43758.5453;
-        return x - Math.floor(x);
-      };
-      if (eq.stand || eq.tank) {
-        const standGeo = new BoxGeometry(
-          config.width + 0.4,
-          2.5,
-          config.depth + 0.4
-        );
-        const standMat = new MeshStandardMaterial({
-          color: 1971472,
-          roughness: 0.8,
-          metalness: 0.1
-        });
-        const standMesh = new Mesh(standGeo, standMat);
-        standMesh.position.set(0, -2.75, 0);
-        standMesh.userData = { isEnv: true, type: "stand" };
-        envGroup.add(standMesh);
-        const doorGeo = new BoxGeometry(
-          config.width * 0.45,
-          2.2,
-          0.05
-        );
-        const doorMat = new MeshStandardMaterial({
-          color: 1182728,
-          roughness: 0.9
-        });
-        const doorLeft = new Mesh(doorGeo, doorMat);
-        doorLeft.position.set(
-          -config.width * 0.23,
-          -2.75,
-          config.depth / 2 + 0.21
-        );
-        doorLeft.userData = { isEnv: true };
-        envGroup.add(doorLeft);
-        const doorRight = new Mesh(doorGeo, doorMat);
-        doorRight.position.set(
-          config.width * 0.23,
-          -2.75,
-          config.depth / 2 + 0.21
-        );
-        doorRight.userData = { isEnv: true };
-        envGroup.add(doorRight);
-      }
-      if (eq.tank) {
-        const glassGeo = new BoxGeometry(
-          config.width,
-          config.height,
-          config.depth
-        );
-        const glassMat = new MeshPhysicalMaterial({
-          color: 9151672,
-          metalness: 0.1,
-          roughness: 0.1,
-          transmission: 0.9,
-          transparent: true,
-          opacity: 0.12,
-          depthWrite: false,
-          side: DoubleSide
-        });
-        const glassMesh = new Mesh(glassGeo, glassMat);
-        glassMesh.position.set(0, 0, 0);
-        glassMesh.userData = { isEnv: true, type: "glass" };
-        envGroup.add(glassMesh);
-        const bgGeo = new PlaneGeometry(
-          config.width - 0.05,
-          config.height - 0.05
-        );
-        const bgMat = new MeshBasicMaterial({
-          color: 331288,
-          side: DoubleSide
-        });
-        const bgMesh = new Mesh(bgGeo, bgMat);
-        bgMesh.position.set(0, 0, -config.depth / 2 + 0.02);
-        bgMesh.userData = { isEnv: true, type: "bg" };
-        envGroup.add(bgMesh);
-      }
-      if (eq.substrate > 0 && eq.tank) {
-        const sandHeight = Math.min(0.4, 0.1 + eq.substrate / 40 * 0.15);
-        const sandGeo = new BoxGeometry(
-          config.width - 0.1,
-          sandHeight,
-          config.depth - 0.1
-        );
-        const isLit = (eq.lightBasic || eq.lightReef) && state.equipment.lightOn;
-        const sandMat = new MeshStandardMaterial({
-          color: 14074522,
-          roughness: 0.95,
-          metalness: 0.05,
-          emissive: isLit ? 10474728 : 0,
-          emissiveIntensity: isLit ? 0.25 : 0,
-          emissiveMap: TextureGenerator_default.causticsTexture()
-        });
-        if (sandMat.emissiveMap) {
-          sandMat.emissiveMap.wrapS = RepeatWrapping;
-          sandMat.emissiveMap.wrapT = RepeatWrapping;
-          sandMat.emissiveMap.repeat.set(3, 1.5);
-        }
-        const sandMesh = new Mesh(sandGeo, sandMat);
-        sandMesh.userData = { isEnv: true, type: "sand", isSand: true };
-        sandMesh.position.set(
-          0,
-          -config.height / 2 + sandHeight / 2 + 0.02,
-          0
-        );
-        envGroup.add(sandMesh);
-      }
-      if (eq.liveRock > 0 && eq.tank) {
-        const rockCount = Math.min(
-          18,
-          Math.max(3, Math.floor(eq.liveRock / 7))
-        );
-        const rockGroup = new Group();
-        rockGroup.userData = { isEnv: true, type: "rocks" };
-        for (let i = 0; i < rockCount; i++) {
-          const radius = 0.5 + seededRandom2(i * 11) * 0.4;
-          const rockGeo = new DodecahedronGeometry(radius, 2);
-          const isCoralline = state.cycleComplete || state.cycleDay > 15;
-          const rockMat = new MeshStandardMaterial({
-            map: isCoralline ? TextureGenerator_default.mottleTexture(
-              "rock-coralline",
-              6961237,
-              [9063024, 5122626, 10508408],
-              { count: 22, alpha: 0.4, speckle: 200 }
-            ) : TextureGenerator_default.mottleTexture(
-              "rock-live",
-              7565420,
-              [9078142, 6052180, 9736072],
-              { count: 22, alpha: 0.4, speckle: 200 }
-            ),
-            roughness: 1,
-            metalness: 0.05
-          });
-          const rockMesh = new Mesh(rockGeo, rockMat);
-          rockMesh.scale.set(
-            0.8 + seededRandom2(i * 13) * 0.6,
-            0.6 + seededRandom2(i * 17) * 0.6,
-            0.8 + seededRandom2(i * 19) * 0.6
-          );
-          const isBase = i < rockCount * 0.5;
-          const isMid = !isBase && i < rockCount * 0.85;
-          const angle = i / rockCount * Math.PI * 2.5;
-          const dist = isBase ? 1 + seededRandom2(i) * 0.4 : isMid ? 0.6 : 0.2;
-          const rx = Math.sin(angle) * dist * 1.5;
-          const rz = Math.cos(angle) * dist * 0.6;
-          let ry = -config.height / 2 + 0.2;
-          if (isMid) ry += 0.4 + seededRandom2(i) * 0.3;
-          if (!isBase && !isMid) ry += 0.9 + seededRandom2(i) * 0.3;
-          if (isMid) {
-            rockMesh.position.set(rx * 0.7, ry, rz - 0.4);
-          } else if (!isBase && !isMid) {
-            rockMesh.position.set(rx * 0.4, ry, rz - 0.2);
-          } else {
-            rockMesh.position.set(rx, ry, rz);
-          }
-          rockMesh.rotation.set(
-            seededRandom2(i + 1) * Math.PI,
-            seededRandom2(i + 2) * Math.PI,
-            0
-          );
-          rockGroup.add(rockMesh);
-        }
-        envGroup.add(rockGroup);
-      }
-      if (eq.heater && eq.tank) {
-        const heaterGroup = new Group();
-        heaterGroup.userData = { isEnv: true, type: "heater" };
-        const rodGeo = new CylinderGeometry(0.05, 0.05, 1.4, 16);
-        const rodMat = new MeshStandardMaterial({
-          color: 2236962,
-          metalness: 0.9,
-          roughness: 0.1
-        });
-        const rod = new Mesh(rodGeo, rodMat);
-        const topGeo = new CylinderGeometry(0.07, 0.07, 0.2, 16);
-        const topMat = new MeshStandardMaterial({
-          color: 959977,
-          roughness: 0.6
-        });
-        const top = new Mesh(topGeo, topMat);
-        top.position.y = 0.75;
-        const suctionGeo = new CylinderGeometry(0.08, 0.08, 0.04, 16);
-        const suctionMat = new MeshStandardMaterial({
-          color: 1118481,
-          transparent: true,
-          opacity: 0.8
-        });
-        const suction1 = new Mesh(suctionGeo, suctionMat);
-        suction1.rotation.x = Math.PI / 2;
-        suction1.position.set(0, 0.4, -0.06);
-        const suction2 = new Mesh(suctionGeo, suctionMat);
-        suction2.rotation.x = Math.PI / 2;
-        suction2.position.set(0, -0.4, -0.06);
-        const ledGeo = new SphereGeometry(0.02, 8, 8);
-        const ledMat = new MeshBasicMaterial({
-          color: eq.heaterOn ? 16720384 : 2236962
-        });
-        const led = new Mesh(ledGeo, ledMat);
-        led.position.set(0, 0.75, 0.06);
-        heaterGroup.add(rod, top, suction1, suction2, led);
-        heaterGroup.position.set(
-          -config.width / 2 + 0.3,
-          -0.2,
-          -config.depth / 2 + 0.1
-        );
-        envGroup.add(heaterGroup);
-      }
-      if ((eq.powerhead || eq.wavemaker) && eq.tank) {
-        const powerGroup = new Group();
-        powerGroup.userData = { isEnv: true, type: "powerhead" };
-        const baseGeo = new CylinderGeometry(0.25, 0.25, 0.1, 32);
-        baseGeo.rotateZ(Math.PI / 2);
-        const baseMat = new MeshStandardMaterial({
-          color: 1118481,
-          roughness: 0.4
-        });
-        const base = new Mesh(baseGeo, baseMat);
-        const cageGeo = new SphereGeometry(0.24, 16, 16, 0, Math.PI);
-        cageGeo.rotateZ(-Math.PI / 2);
-        const cageMat = new MeshStandardMaterial({
-          color: 2236962,
-          wireframe: true,
-          transparent: true,
-          opacity: 0.5
-        });
-        const cage = new Mesh(cageGeo, cageMat);
-        cage.position.set(0.05, 0, 0);
-        const propGeo = new CylinderGeometry(0.15, 0.15, 0.02, 3);
-        propGeo.rotateZ(Math.PI / 2);
-        const propMat = new MeshStandardMaterial({ color: 959977 });
-        const prop = new Mesh(propGeo, propMat);
-        prop.position.set(0.1, 0, 0);
-        const magnetGeo = new CylinderGeometry(0.25, 0.25, 0.15, 32);
-        magnetGeo.rotateZ(Math.PI / 2);
-        const magnet = new Mesh(magnetGeo, baseMat);
-        magnet.position.set(-0.2, 0, 0);
-        powerGroup.add(base, cage, prop, magnet);
-        powerGroup.position.set(
-          -config.width / 2 + 0.15,
-          config.height / 2 - 0.6,
-          0
-        );
-        envGroup.add(powerGroup);
-      }
-      if (eq.proteinSkimmer && eq.tank) {
-        const skimmerGroup = new Group();
-        skimmerGroup.userData = { isEnv: true, type: "skimmer" };
-        const acrylicMat = new MeshPhysicalMaterial({
-          color: 16777215,
-          transmission: 0.9,
-          transparent: true,
-          opacity: 0.3,
-          roughness: 0.1
-        });
-        const plasticMat = new MeshStandardMaterial({
-          color: 14753096,
-          roughness: 0.4
-        });
-        const foamMat = new MeshStandardMaterial({
-          color: 14535816,
-          opacity: 0.85,
-          transparent: true
-        });
-        const cylGeo = new CylinderGeometry(0.25, 0.25, 1.2, 32);
-        const cylinder = new Mesh(cylGeo, acrylicMat);
-        const neckGeo = new ConeGeometry(0.25, 0.3, 32);
-        const neck = new Mesh(neckGeo, acrylicMat);
-        neck.position.y = 0.75;
-        neck.rotation.x = Math.PI;
-        const cupGeo = new CylinderGeometry(0.3, 0.3, 0.4, 32);
-        const cup = new Mesh(cupGeo, acrylicMat);
-        cup.position.y = 1.1;
-        const lidGeo = new CylinderGeometry(0.32, 0.32, 0.02, 32);
-        const lid = new Mesh(lidGeo, plasticMat);
-        lid.position.y = 1.31;
-        const foamGeo = new CylinderGeometry(0.29, 0.29, 0.15, 32);
-        const foam = new Mesh(foamGeo, foamMat);
-        foam.position.y = 1;
-        const silGeo = new CylinderGeometry(0.04, 0.04, 0.2, 16);
-        const silencer = new Mesh(silGeo, plasticMat);
-        silencer.position.set(0.3, 1.2, 0);
-        skimmerGroup.add(cylinder, neck, cup, lid, foam, silencer);
-        skimmerGroup.position.set(
-          config.width / 2 - 0.4,
-          -0.4,
-          -config.depth / 2 + 0.4
-        );
-        envGroup.add(skimmerGroup);
-      }
-      if ((eq.lightBasic || eq.lightReef) && eq.tank) {
-        const lightGroup = new Group();
-        lightGroup.userData = { isEnv: true, type: "lighting" };
-        const isReef = eq.lightReef;
-        const fixtureGeo = new BoxGeometry(
-          config.width - 1,
-          0.12,
-          0.6
-        );
-        const fixtureMat = new MeshStandardMaterial({
-          color: isReef ? 988970 : 3359061,
-          metalness: 0.8,
-          roughness: 0.2
-        });
-        const fixture = new Mesh(fixtureGeo, fixtureMat);
-        fixture.position.set(0, config.height / 2 + 0.4, 0);
-        const legGeo = new BoxGeometry(0.08, 0.45, 0.6);
-        const legMat = new MeshStandardMaterial({ color: 1976635 });
-        const legLeft = new Mesh(legGeo, legMat);
-        legLeft.position.set(
-          -config.width / 2 + 0.4,
-          config.height / 2 + 0.2,
-          0
-        );
-        const legRight = new Mesh(legGeo, legMat);
-        legRight.position.set(
-          config.width / 2 - 0.4,
-          config.height / 2 + 0.2,
-          0
-        );
-        lightGroup.add(fixture, legLeft, legRight);
-        envGroup.add(lightGroup);
-      }
-      if (eq.sump && eq.stand) {
-        const sumpGroup = new Group();
-        sumpGroup.userData = { isEnv: true, type: "sump" };
-        const sumpGeo = new BoxGeometry(
-          config.width * 0.7,
-          1.2,
-          config.depth * 0.7
-        );
-        const sumpMat = new MeshPhysicalMaterial({
-          color: 11193599,
-          transmission: 0.85,
-          transparent: true,
-          opacity: 0.3
-        });
-        const sumpMesh = new Mesh(sumpGeo, sumpMat);
-        sumpGroup.add(sumpMesh);
-        sumpGroup.position.set(0, -3.1, 0);
-        envGroup.add(sumpGroup);
-      }
-      if ((eq.autoTopOff || eq.dosingPump) && eq.tank) {
-        const autoGroup = new Group();
-        autoGroup.userData = { isEnv: true, type: "automation" };
-        const unitGeo = new BoxGeometry(0.4, 0.6, 0.2);
-        const unitMat = new MeshStandardMaterial({ color: 165063 });
-        const unit = new Mesh(unitGeo, unitMat);
-        unit.position.set(config.width / 2 + 0.3, -2, 0);
-        autoGroup.add(unit);
-        envGroup.add(autoGroup);
-      }
-      if (eq.quarantineTank) {
-        const qtGroup = new Group();
-        qtGroup.userData = { isEnv: true, type: "qt" };
-        const qtGlassGeo = new BoxGeometry(1.8, 1.2, 1.2);
-        const qtGlassMat = new MeshPhysicalMaterial({
-          color: 9741240,
-          transmission: 0.9,
-          transparent: true,
-          opacity: 0.3
-        });
-        const qtGlass = new Mesh(qtGlassGeo, qtGlassMat);
-        qtGroup.add(qtGlass);
-        qtGroup.position.set(config.width / 2 + 1.8, -2, 0);
-        envGroup.add(qtGroup);
-      }
-      if (eq.macroAlgae && eq.tank) {
-        const plantGroup = new Group();
-        plantGroup.userData = { isEnv: true, type: "macroAlgae" };
-        for (let k = 0; k < 6; k++) {
-          const strandGeo = new TorusGeometry(0.15, 0.03, 8, 16);
-          const strandMat = new MeshStandardMaterial({
-            color: 2278750,
-            roughness: 0.6
-          });
-          const strand = new Mesh(strandGeo, strandMat);
-          const xSeed = seededRandom2(k + 21);
-          const ySeed = seededRandom2(k + 31);
-          const zSeed = seededRandom2(k + 41);
-          strand.position.set(
-            -config.width / 3 + (xSeed - 0.5) * 0.4,
-            -config.height / 2 + 0.4 + k * 0.1,
-            (zSeed - 0.5) * 0.4
-          );
-          strand.rotation.set(xSeed * 3, ySeed * 3, 0);
-          plantGroup.add(strand);
-        }
-        envGroup.add(plantGroup);
-      }
-      scene.add(envGroup);
+      const group = buildPhysicalEnvironment(state);
+      scene.userData.tankEnvironmentGroup = group;
+      scene.userData.tankEnvironmentSignature = JSON.stringify([
+        getTankSpec(state),
+        state.equipment,
+        (state.placedItems || []).filter((item) => item.kind === "rock"),
+        Boolean(state.aquascapeInitialized),
+        state.cycleComplete
+      ]);
+      scene.add(group);
+      group.updateMatrixWorld(true);
     }
     // Geometry/materials belong to a scene group; generated textures are shared cache entries.
     static disposeGroup(group) {
@@ -31699,231 +32400,404 @@
     }
   };
 
-  // js/graphics/CleanupMotion.js
-  var clamp2 = (v2, a, b) => Math.max(a, Math.min(b, v2));
-  var UP = new Vector3(0, 1, 0);
-  var fallback = {
-    floorY: -1.15,
-    bounds: { minX: -2.75, maxX: 2.75, minZ: -1.25, maxZ: 1.25 },
-    sample: (x, z) => ({ x, y: -1.15, z, normal: UP, type: "sand" })
-  };
-  function cleanupSeed(id) {
+  // js/graphics/FishMotion.js
+  var clamp3 = (n, a, b) => Math.max(a, Math.min(b, n));
+  function fishSeed(id) {
     let hash = 2166136261;
-    for (const char of String(id))
+    for (const char of String(id ?? 0))
       hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
     hash ^= hash >>> 16;
     hash = Math.imul(hash, 2146121005);
     hash ^= hash >>> 15;
-    hash = Math.imul(hash, 2221713035);
-    return ((hash ^ hash >>> 16) >>> 0) / 4294967296;
+    return (hash >>> 0) / 4294967296;
   }
-  function clearance(point, mesh, context) {
-    let minimum = 10;
-    for (const other of context.cleanupMeshes?.values() || []) {
-      if (other === mesh || !other.userData.cleanupMotion) continue;
-      minimum = Math.min(minimum, point.distanceTo(other.position) - 0.44);
+  var heightCaches = /* @__PURE__ */ new WeakMap();
+  function habitatHeight(habitat, x, z) {
+    if (!habitat?.sample) return habitat?.floorY ?? -getTankSpec({}).height / 2;
+    let cache2 = heightCaches.get(habitat);
+    if (!cache2) {
+      cache2 = /* @__PURE__ */ new Map();
+      heightCaches.set(habitat, cache2);
     }
-    for (const coral of context.coralMeshes?.values() || []) {
-      const radius = coral.userData.placementRadius || 0.4;
-      if (Math.abs(point.y - coral.position.y) < 0.5)
-        minimum = Math.min(
-          minimum,
-          Math.hypot(
-            point.x - coral.position.x,
-            point.z - coral.position.z
-          ) - radius - 0.24
-        );
+    const cell = 0.012, ix = Math.round(x / cell), iz = Math.round(z / cell), key = ix + ":" + iz;
+    if (!cache2.has(key)) {
+      if (cache2.size > 8192) cache2.clear();
+      cache2.set(
+        key,
+        habitat.sample(ix * cell, iz * cell)?.y ?? habitat.floorY
+      );
     }
-    return minimum;
+    return cache2.get(key);
   }
-  function surfacePose(mesh, x, z, surface, heading) {
-    const up = surface.normal.clone().normalize();
-    const forward = new Vector3(Math.cos(heading), 0, -Math.sin(heading));
-    forward.addScaledVector(up, -forward.dot(up)).normalize();
-    if (forward.lengthSq() < 0.1) forward.set(0, 0, 1);
-    const side = new Vector3().crossVectors(forward, up).normalize();
-    forward.crossVectors(up, side).normalize();
-    mesh.quaternion.setFromRotationMatrix(
-      new Matrix4().makeBasis(forward, up, side)
+  function foodTarget(animal, state) {
+    const event = state?.feedingEvent;
+    if (!event?.position) return null;
+    const now2 = (state.day || 0) * 24 + (state.hour || 0) + (state.minute || 0) / 60;
+    const age = now2 - event.timeHours, diet = getSpecies(animal.templateId).diet;
+    if (age < 0 || age > 2 || event.remaining === 0) return null;
+    return event.diet === diet || diet === "mixed" || event.diet === "mixed" && diet !== "copepods" ? event.position : null;
+  }
+  function fishTarget(fish2, seconds, surfaceHeight, habitat = null, state = null) {
+    const spec = habitat?.spec || getTankSpec(state || {}), floor = habitat?.floorY ?? -spec.height / 2;
+    const sample = surfaceHeight || (() => floor), p = getSpecies(fish2.templateId), length = physicalSize(fish2);
+    const margin = Math.min(
+      length * 0.55,
+      Math.min(spec.width, spec.depth, spec.height) * 0.22
     );
-    mesh.position.set(x, surface.y, z);
-    mesh.userData.habitatMode = surface.type;
-  }
-  function initialize(mesh, animal, context) {
-    const habitat = context.habitat || fallback;
-    const seed = cleanupSeed(animal.id);
-    const species = animal.templateId;
-    const glass = species === "turboSnail" && seed < 0.5;
-    const sand = species === "nassariusSnail";
-    const b = habitat.bounds;
-    let best, bestScore = -Infinity;
-    for (let i = 0; i < 96; i++) {
-      const u = (seed + i * 0.61803398875) % 1;
-      const v2 = (seed * 7.13 + i * 0.41421356237) % 1;
-      const x = b.minX + 0.23 + u * (b.maxX - b.minX - 0.46);
-      const z = b.minZ + 0.23 + v2 * (b.maxZ - b.minZ - 0.46);
-      const surface = habitat.sample(x, z);
-      if (sand && surface.type === "rock") continue;
-      const point = new Vector3(x, surface.y, z);
-      if (glass) point.set(seed < 0.25 ? -2.94 : 2.94, -0.85 + u * 1.6, z);
-      const score = clearance(point, mesh, context) + (!sand && !glass && surface.type === "rock" ? 2 : 0);
-      if (score > bestScore) {
-        best = { point, surface };
-        bestScore = score;
+    const seed = fishSeed(fish2.id), phase = seed * Math.PI * 2, t = Math.max(0, seconds || 0), a = t * 0.26 + phase;
+    const anchor = habitat?.rockPoints?.[Math.floor(seed * habitat.rockPoints.length)];
+    let x = Math.sin(a) * (spec.width * 0.42 - margin), z = Math.cos(a * 0.83) * (spec.depth * 0.38 - margin);
+    let y = floor + spec.height * 0.62 + Math.sin(a * 1.3) * spec.height * 0.1, behavior = p.movement, speed = length * 1.2;
+    if (["territorial", "cave", "hover", "perch", "bottom"].includes(p.movement)) {
+      const range = length * (p.movement === "territorial" ? 2 : 1.2);
+      x = (anchor?.x ?? (seed - 0.5) * spec.width * 0.6) + Math.sin(a) * range;
+      z = (anchor?.z ?? spec.depth * 0.12) + Math.cos(a * 0.8) * range * 0.6;
+      y = (anchor?.y ?? floor) + length * (p.movement === "hover" ? 2 : 0.65);
+      speed = length * 0.55;
+      if (["bottom", "perch"].includes(p.movement)) {
+        y = sample(x, z) + length * 0.25;
+        if (p.movement === "perch") {
+          const cycle = t / 9 + seed * 4, step = Math.floor(cycle), progress = Math.max(0, (cycle % 1 - 0.7) / 0.3);
+          const f = progress * progress * (3 - 2 * progress);
+          const rocks = habitat?.rockPoints;
+          const home = anchor || {
+            x: (seed - 0.5) * spec.width * 0.6,
+            z: spec.depth * 0.12
+          };
+          const next = rocks?.length > 1 ? rocks[(Math.floor(seed * rocks.length) + 1) % rocks.length] : { x: home.x + length * 2, z: home.z };
+          const fraction = step % 2 ? 1 - f : f;
+          x = home.x + (next.x - home.x) * fraction;
+          z = home.z + (next.z - home.z) * fraction;
+          y = sample(x, z) + length * 0.3;
+          if (progress === 0) {
+            speed *= 0.12;
+            behavior = "perching";
+          } else behavior = "grazing";
+        }
       }
-      if (score > (sand || glass ? 0.2 : 2.2)) break;
+    } else if (p.movement === "weave") {
+      z = Math.sin(a * 1.8) * spec.depth * 0.35;
+      y = floor + spec.height * 0.4 + Math.cos(a * 2.1) * spec.height * 0.12;
+      speed = length * 1.8;
+    } else if (p.movement === "school") {
+      x = Math.sin(t * 0.18) * spec.width * 0.28 + Math.sin(phase) * length * 1.8;
+      z = Math.cos(t * 0.18) * spec.depth * 0.22 + Math.cos(phase) * length * 1.8;
+      y = floor + spec.height * 0.7 + Math.sin(phase * 2) * length;
     }
-    best ||= {
-      point: new Vector3(-2.5, habitat.floorY, 1),
-      surface: { y: habitat.floorY, normal: UP, type: "sand" }
-    };
-    const motion = {
-      habitat,
-      seed,
-      glass,
-      sand,
-      home: best.point.clone(),
-      elapsed: 0,
-      heading: seed * Math.PI * 2,
-      surface: best.surface,
-      lastSample: best.point.clone()
-    };
-    mesh.userData.cleanupMotion = motion;
-    mesh.position.copy(best.point);
-    if (glass) {
-      const up = new Vector3(best.point.x < 0 ? 1 : -1, 0, 0);
-      const forward = new Vector3(0, 1, 0);
-      const side = new Vector3().crossVectors(forward, up);
-      mesh.quaternion.setFromRotationMatrix(
-        new Matrix4().makeBasis(forward, up, side)
-      );
-      mesh.userData.habitatMode = "glass";
-    } else
-      surfacePose(
-        mesh,
-        best.point.x,
-        best.point.z,
-        best.surface,
-        motion.heading
-      );
-    return motion;
+    const food = foodTarget(fish2, state);
+    if (food) {
+      x = food.x + Math.sin(phase) * length;
+      z = food.z + Math.cos(phase) * length;
+      y = ["bottom", "perch"].includes(p.movement) ? sample(x, z) + length * 0.25 : food.y;
+      speed *= 1.65;
+      behavior = "feeding";
+    }
+    const v2 = constrainPoint(spec, { x, y, z }, margin);
+    v2.y = Math.min(
+      waterLevel(spec) - margin,
+      Math.max(
+        y,
+        -spec.height / 2 + length * 0.15,
+        sample(v2.x, v2.z) + length * 0.3
+      )
+    );
+    return { ...v2, speed, behavior, clearance: length * 0.3 };
   }
-  function updateCleanupMotion(mesh, animal, delta, context = {}) {
-    const dt = clamp2(Number.isFinite(delta) ? delta : 1 / 60, 0, 0.1);
-    let motion = mesh.userData.cleanupMotion;
-    const habitat = context.habitat || fallback;
-    if (motion && motion.habitat !== habitat) {
-      const sample = habitat.sample(mesh.position.x, mesh.position.z);
-      const bounds = habitat.bounds;
-      const supported = motion.glass ? mesh.position.z >= bounds.minZ && mesh.position.z <= bounds.maxZ : sample.type === motion.surface.type && Math.abs(sample.y - mesh.position.y) < 0.025 && mesh.position.x >= bounds.minX && mesh.position.x <= bounds.maxX && mesh.position.z >= bounds.minZ && mesh.position.z <= bounds.maxZ;
-      if (supported) {
-        motion.habitat = habitat;
-        motion.surface = sample;
-        motion.lastSample.set(mesh.position.x, sample.y, mesh.position.z);
-      } else motion = null;
+  var obstacles = /* @__PURE__ */ new WeakMap();
+  function coralObstacle(mesh2) {
+    const key = [
+      mesh2.position.x,
+      mesh2.position.y,
+      mesh2.position.z,
+      mesh2.scale.x,
+      mesh2.rotation.y
+    ].join(":");
+    let cached2 = obstacles.get(mesh2);
+    if (cached2?.key !== key) {
+      cached2 = { key, box: new Box3().setFromObject(mesh2) };
+      obstacles.set(mesh2, cached2);
     }
-    if (!motion) motion = initialize(mesh, animal, context);
-    if (animal.alive === false || dt === 0) return;
-    motion.elapsed += dt;
-    const species = animal.templateId;
-    const shrimp = species.includes("Shrimp");
-    const station = species === "cleanerShrimp";
-    const night = context.state?.hour >= 20 || context.state?.hour < 7;
-    const speed = species.includes("Snail") ? 0.025 : shrimp ? 0.065 : 0.045;
-    let active = species === "peppermintShrimp" && !night ? 0.2 : 1;
-    if (motion.sand) {
-      const state = context.state;
-      const feedingKey = state ? `${state.lastFed}:${state.feedingsToday}` : "";
-      if (state && state.lastFed === state.day && state.feedingsToday > 0 && motion.feedingKey !== feedingKey)
-        motion.fedUntil = motion.elapsed + 45;
-      motion.feedingKey = feedingKey;
-      const fed = motion.elapsed < (motion.fedUntil || 0);
-      const buried = Boolean(state?.equipment?.substrate) && !fed;
-      mesh.userData.burrowDepth = buried ? 0.15 : 0;
-      if (buried) active = 0.08;
-    }
-    const t = motion.elapsed * (station ? 0.3 : 0.08) + motion.seed * Math.PI * 2;
-    const range = station ? 0.15 : shrimp ? 0.4 : motion.sand ? 0.65 : 0.55;
-    const desired = motion.home.clone();
-    if (motion.glass) {
-      desired.y += Math.sin(t) * 0.32;
-      desired.z += Math.cos(t * 0.73) * 0.28;
-    } else {
-      desired.x += Math.sin(t) * range;
-      desired.z += Math.cos(t * 0.73) * range * 0.65;
-    }
-    const direction = desired.sub(mesh.position);
-    if (!motion.glass) direction.y = 0;
-    if (direction.length() > 0.01) direction.normalize();
-    for (const other of context.cleanupMeshes?.values() || []) {
-      if (other === mesh || !other.userData.cleanupMotion) continue;
-      const away = mesh.position.clone().sub(other.position);
-      const distance = away.length();
-      if (distance < 0.5 && distance > 1e-4)
-        direction.addScaledVector(away, (0.5 - distance) * 8 / distance);
-    }
-    for (const coral of context.coralMeshes?.values() || []) {
-      const away = mesh.position.clone().sub(coral.position);
-      if (Math.abs(away.y) > 0.5) continue;
-      away.y = 0;
-      const distance = away.length();
-      const radius = (coral.userData.placementRadius || 0.4) + 0.24;
-      if (distance < radius && distance > 1e-4)
+    return cached2.box;
+  }
+  function advanceFishMotion(mesh2, fish2, seconds, delta, context = {}) {
+    const dt = clamp3(delta || 0, 0, 0.1);
+    if (!dt || fish2.alive === false) return;
+    const spec = context.habitat?.spec || getTankSpec(context.state || {});
+    const surface = context.surfaceHeight || ((x, z) => habitatHeight(context.habitat, x, z));
+    const species = getSpecies(fish2.templateId), length = physicalSize(fish2);
+    const margin = Math.min(
+      length * 0.55,
+      Math.min(spec.width, spec.depth, spec.height) * 0.22
+    );
+    const target = fishTarget(
+      fish2,
+      seconds,
+      surface,
+      context.habitat,
+      context.state
+    );
+    const direction = new Vector3(target.x, target.y, target.z).sub(
+      mesh2.position
+    );
+    const center = new Vector3(), heading = new Vector3();
+    let count = 0;
+    for (const other of context.fishMeshes?.values() || []) {
+      if (other === mesh2 || other.userData.dead) continue;
+      const away = mesh2.position.clone().sub(other.position), d = away.length();
+      const radius = (length + (other.userData.physicalLengthM || length)) * 0.65;
+      if (d < radius) {
+        if (d < 1e-5)
+          away.set(
+            Math.cos(fishSeed(fish2.id) * 6.28),
+            0,
+            Math.sin(fishSeed(fish2.id) * 6.28)
+          ).multiplyScalar(1e-3);
         direction.addScaledVector(
           away,
-          (radius - distance) * 10 / distance
+          (radius - d) * 3 / Math.max(1e-3, away.length())
         );
+      }
+      if (species.movement === "school" && other.userData.templateId === fish2.templateId && d < length * 10) {
+        center.add(other.position);
+        if (other.userData.velocity) heading.add(other.userData.velocity);
+        count++;
+      }
     }
-    if (motion.glass) direction.x = 0;
-    else direction.y = 0;
-    direction.clampLength(0, 1);
-    const before = mesh.position.clone();
-    const next = before.clone().addScaledVector(direction, speed * active * dt);
-    const b = motion.habitat.bounds;
-    if (motion.glass) {
-      next.y = clamp2(next.y, -1.02, 1.12);
-      next.z = clamp2(next.z, b.minZ + 0.2, b.maxZ - 0.2);
-      const up = new Vector3(next.x < 0 ? 1 : -1, 0, 0);
-      const forward = direction.lengthSq() > 1e-3 ? direction.clone().normalize() : new Vector3(0, 1, 0);
-      const side = new Vector3().crossVectors(forward, up).normalize();
-      mesh.quaternion.setFromRotationMatrix(
-        new Matrix4().makeBasis(forward, up, side)
+    if (count) {
+      direction.addScaledVector(
+        center.multiplyScalar(1 / count).sub(mesh2.position),
+        0.32
       );
-      mesh.position.copy(next);
-      mesh.userData.habitatMode = "glass";
-    } else {
-      next.x = clamp2(next.x, b.minX + 0.23, b.maxX - 0.23);
-      next.z = clamp2(next.z, b.minZ + 0.23, b.maxZ - 0.23);
-      let sample = motion.surface;
-      if (Math.hypot(
-        next.x - motion.lastSample.x,
-        next.z - motion.lastSample.z
-      ) >= 0.015) {
-        sample = motion.habitat.sample(next.x, next.z);
-        motion.surface = sample;
-        motion.lastSample.set(next.x, sample.y, next.z);
-      } else {
-        const n = sample.normal;
-        sample = {
-          ...sample,
-          y: motion.lastSample.y - ((next.x - motion.lastSample.x) * n.x + (next.z - motion.lastSample.z) * n.z) / Math.max(0.15, n.y)
-        };
-      }
-      if (motion.sand && sample.type === "rock" || Math.abs(sample.y - before.y) > 0.12) {
-        motion.home.copy(before);
-        motion.seed = (motion.seed + 0.381966) % 1;
-      } else {
-        if (direction.lengthSq() > 1e-3)
-          motion.heading = Math.atan2(-direction.z, direction.x);
-        surfacePose(mesh, next.x, next.z, sample, motion.heading);
-      }
+      direction.addScaledVector(heading.multiplyScalar(1 / count), 0.35);
     }
-    mesh.userData.swimSpeed = before.distanceTo(mesh.position) / dt;
+    const distance = direction.length(), step = Math.min(
+      distance * (1 - Math.exp(-2.4 * dt)),
+      target.speed * dt
+    );
+    const before = mesh2.position.clone();
+    if (distance > 1e-5)
+      mesh2.position.addScaledVector(direction, step / distance);
+    for (const coral of context.coralMeshes?.values() || []) {
+      const box2 = coralObstacle(coral).clone().expandByScalar(length * 0.25);
+      if (!box2.containsPoint(mesh2.position)) continue;
+      const choices = [
+        { x: box2.min.x - 1e-3, y: mesh2.position.y, z: mesh2.position.z },
+        { x: box2.max.x + 1e-3, y: mesh2.position.y, z: mesh2.position.z },
+        { x: mesh2.position.x, y: mesh2.position.y, z: box2.min.z - 1e-3 },
+        { x: mesh2.position.x, y: mesh2.position.y, z: box2.max.z + 1e-3 }
+      ].filter((v2) => containsPoint(spec, v2.x, v2.z, margin));
+      choices.sort(
+        (a, b) => Math.hypot(a.x - mesh2.position.x, a.z - mesh2.position.z) - Math.hypot(b.x - mesh2.position.x, b.z - mesh2.position.z)
+      );
+      if (choices[0])
+        mesh2.position.set(choices[0].x, choices[0].y, choices[0].z);
+    }
+    const safe = constrainPoint(spec, mesh2.position, margin);
+    mesh2.position.set(
+      safe.x,
+      Math.min(
+        waterLevel(spec) - margin,
+        Math.max(
+          mesh2.position.y,
+          -spec.height / 2 + length * 0.15,
+          surface(safe.x, safe.z) + target.clearance
+        )
+      ),
+      safe.z
+    );
+    mesh2.userData.velocity ||= new Vector3();
+    mesh2.userData.velocity.copy(mesh2.position).sub(before).divideScalar(dt);
+    mesh2.userData.motionSpeed = mesh2.userData.velocity.length();
+    mesh2.userData.behavior = target.behavior;
+  }
+
+  // js/graphics/CleanupMotion.js
+  var UP = new Vector3(0, 1, 0);
+  function cleanupSeed(id) {
+    let h = 2166136261;
+    for (const c of String(id)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+    h ^= h >>> 16;
+    h = Math.imul(h, 2146121005);
+    h ^= h >>> 15;
+    return (h >>> 0) / 4294967296;
+  }
+  function pose(mesh2, point, sample, heading) {
+    const up = (sample.normal || UP).clone().normalize();
+    const forward = new Vector3(Math.cos(heading), 0, -Math.sin(heading));
+    forward.addScaledVector(up, -forward.dot(up)).normalize();
+    const side = new Vector3().crossVectors(forward, up).normalize();
+    forward.crossVectors(up, side).normalize();
+    mesh2.quaternion.setFromRotationMatrix(
+      new Matrix4().makeBasis(forward, up, side)
+    );
+    mesh2.position.set(point.x, sample.y, point.z);
+    mesh2.userData.habitatMode = sample.type;
+  }
+  function glassPose(mesh2, motion, spec, length) {
+    const outline = tankOutline(spec);
+    const progress = (motion.seed + motion.elapsed * length * 0.015) % 1 * outline.length;
+    const index = Math.floor(progress), fraction = progress - index;
+    const a = outline[index], b = outline[(index + 1) % outline.length];
+    const edge = new Vector3(b.x - a.x, 0, b.z - a.z).normalize();
+    const raw = {
+      x: a.x + (b.x - a.x) * fraction,
+      y: 0,
+      z: a.z + (b.z - a.z) * fraction
+    };
+    const point = constrainPoint(spec, raw, length * 0.6);
+    const up = new Vector3(-edge.z, 0, edge.x);
+    if (up.x * point.x + up.z * point.z > 0) up.negate();
+    const forward = new Vector3(0, 1, 0), side = new Vector3().crossVectors(forward, up).normalize();
+    mesh2.quaternion.setFromRotationMatrix(
+      new Matrix4().makeBasis(forward, up, side)
+    );
+    point.y = -spec.height * 0.15 + Math.sin(motion.elapsed * 0.05 + motion.seed * 6.28) * spec.height * 0.22;
+    mesh2.position.set(
+      point.x,
+      Math.min(waterLevel(spec) - length, point.y),
+      point.z
+    );
+    mesh2.userData.habitatMode = "glass";
+  }
+  function updateCleanupMotion(mesh2, animal, delta, context = {}) {
+    const dt = Math.max(
+      0,
+      Math.min(0.1, Number.isFinite(delta) ? delta : 1 / 60)
+    );
+    const spec = context.habitat?.spec || getTankSpec(context.state || {});
+    const length = physicalSize(animal, "cleanup"), margin = length * 0.6;
+    const species = getSpecies(animal.templateId), habitat = context.habitat;
+    const sample = (x, z) => habitat?.sample(x, z) || {
+      x,
+      y: -spec.height / 2,
+      z,
+      normal: UP,
+      type: "sand"
+    };
+    let motion = mesh2.userData.cleanupMotion;
+    if (motion && motion.habitat !== habitat && !motion.glass && Math.abs(sample(mesh2.position.x, mesh2.position.z).y - mesh2.position.y) > length * 0.8)
+      motion = null;
+    if (!motion || motion.specKey !== JSON.stringify(spec)) {
+      const seed = cleanupSeed(animal.id);
+      let best = null, bestScore = -Infinity;
+      for (let i = 0; i < 72; i++) {
+        const x = ((seed + i * 0.61803398875) % 1 - 0.5) * spec.width;
+        const z = ((seed * 7.13 + i * 0.41421356237) % 1 - 0.5) * spec.depth;
+        if (!containsPoint(spec, x, z, margin)) continue;
+        const s2 = sample(x, z);
+        if (species.movement === "burrow" && s2.type === "rock") continue;
+        let score = species.movement === "station" && s2.type === "rock" ? 1 : 0;
+        for (const other of context.cleanupMeshes?.values() || []) {
+          if (other !== mesh2)
+            score -= Math.max(
+              0,
+              length * 2 - Math.hypot(
+                x - other.position.x,
+                z - other.position.z
+              )
+            ) * 20;
+        }
+        if (score > bestScore) {
+          best = { x, y: s2.y, z };
+          bestScore = score;
+        }
+      }
+      best ||= constrainPoint(
+        spec,
+        { x: 0, y: -spec.height / 2, z: 0 },
+        margin
+      );
+      motion = {
+        seed,
+        habitat,
+        glass: ["turboSnail", "trochusSnail"].includes(animal.templateId) && seed < 0.5,
+        sand: species.movement === "burrow",
+        home: new Vector3(best.x, best.y, best.z),
+        elapsed: 0,
+        heading: seed * Math.PI * 2,
+        specKey: JSON.stringify(spec)
+      };
+      mesh2.userData.cleanupMotion = motion;
+      pose(mesh2, best, sample(best.x, best.z), motion.heading);
+    }
+    motion.habitat = habitat;
+    if (motion.glass) {
+      if (animal.alive !== false) motion.elapsed += dt;
+      const before2 = mesh2.position.clone();
+      glassPose(mesh2, motion, spec, length);
+      mesh2.userData.swimSpeed = dt ? before2.distanceTo(mesh2.position) / dt : 0;
+      return;
+    }
+    if (animal.alive === false || dt === 0) return;
+    motion.elapsed += dt;
+    const night = (context.state?.hour ?? 12) >= 20 || (context.state?.hour ?? 12) < 7;
+    const food = foodTarget(animal, context.state);
+    if (food && motion.feedingKey !== context.state.feedingEvent.id) {
+      motion.feedingKey = context.state.feedingEvent.id;
+      motion.fedUntil = motion.elapsed + 45;
+    }
+    const buried = species.movement === "burrow" && context.state?.equipment?.substrate && motion.elapsed >= (motion.fedUntil || 0);
+    mesh2.userData.burrowDepth = buried ? 0.1 : 0;
+    const range = length * (species.movement === "station" ? 2 : 8);
+    const a = motion.elapsed * 0.16 + motion.seed * 6.283;
+    const target = food ? new Vector3(food.x, 0, food.z) : motion.home.clone().add(
+      new Vector3(
+        Math.sin(a) * range,
+        0,
+        Math.cos(a * 0.73) * range * 0.65
+      )
+    );
+    const direction = target.sub(mesh2.position);
+    direction.y = 0;
+    if (direction.lengthSq() > 1e-6) direction.normalize();
+    for (const other of context.cleanupMeshes?.values() || []) {
+      if (other === mesh2) continue;
+      const away = mesh2.position.clone().sub(other.position);
+      away.y = 0;
+      const d = away.length(), radius = length + (other.userData.physicalLengthM || length);
+      if (d < radius && d > 1e-5)
+        direction.addScaledVector(away, (radius - d) * 8 / d);
+    }
+    direction.clampLength(0, 1);
+    const active = buried ? 0.08 : species.movement === "nocturnal" && !night ? 0.2 : 1;
+    const speed = length * (animal.templateId.includes("Snail") ? 0.12 : 0.5) * (food ? 1.6 : 1);
+    const before = mesh2.position.clone();
+    const point = constrainPoint(
+      spec,
+      before.clone().addScaledVector(direction, speed * active * dt),
+      margin
+    );
+    let s;
+    const probe = motion.probe;
+    if (!probe || Math.hypot(point.x - probe.x, point.z - probe.z) > length * 0.25 || motion.probeHabitat !== habitat) {
+      s = sample(point.x, point.z);
+      motion.probe = { ...s, x: point.x, z: point.z };
+      motion.probeHabitat = habitat;
+    } else {
+      const n = probe.normal || UP;
+      s = {
+        ...probe,
+        y: probe.y - ((point.x - probe.x) * n.x + (point.z - probe.z) * n.z) / Math.max(0.15, n.y)
+      };
+    }
+    if (species.movement === "burrow" && s.type === "rock" || Math.abs(s.y - before.y) > length * 0.8) {
+      motion.home.copy(before);
+      motion.seed = (motion.seed + 0.381966) % 1;
+    } else {
+      if (direction.lengthSq() > 1e-5)
+        motion.heading = Math.atan2(-direction.z, direction.x);
+      pose(mesh2, point, s, motion.heading);
+    }
+    mesh2.userData.swimSpeed = before.distanceTo(mesh2.position) / dt;
+    mesh2.userData.behavior = food ? "feeding" : species.movement;
   }
 
   // js/graphics/FishTextures.js
   var cache = /* @__PURE__ */ new Map();
   var palettes = {
+    lyretailAnthias: [239, 117, 63],
+    greenChromis: [58, 189, 180],
+    yellowWatchmanGoby: [242, 209, 35],
     clownfish: [247, 105, 13],
     royalGramma: [139, 35, 202],
     firefishGoby: [239, 228, 204],
@@ -31950,7 +32824,20 @@
         const u = x / 511;
         let rgb = (palettes[id] || palettes.clownfish).slice();
         const black = [17, 22, 29], white = [243, 242, 223];
-        if (id === "clownfish") {
+        if (id === "lyretailAnthias") {
+          if (u > 0.77 && Math.abs(height + 0.2) < 0.08)
+            rgb = [167, 65, 167];
+          if (height > 0.5) rgb = [233, 75, 130];
+        } else if (id === "greenChromis") {
+          rgb = [
+            50 + 30 * u,
+            177 + 25 * Math.abs(side),
+            174 + 38 * Math.abs(side)
+          ];
+        } else if (id === "yellowWatchmanGoby") {
+          if (Math.sin(u * 109) * Math.cos(angle * 27) > 0.9)
+            rgb = [61, 159, 222];
+        } else if (id === "clownfish") {
           const bend = 0.018 * Math.sin(angle * 2);
           const d = Math.min(
             Math.abs(u - 0.18 - bend),
@@ -32030,6 +32917,33 @@
 
   // js/graphics/FishModels.js
   var FISH_PROFILES = {
+    lyretailAnthias: {
+      length: 0.61,
+      height: 0.115,
+      width: 0.052,
+      color: 15564108,
+      fin: 13387382,
+      tail: "lyre",
+      frequency: 2.8
+    },
+    greenChromis: {
+      length: 0.48,
+      height: 0.12,
+      width: 0.052,
+      color: 4965308,
+      fin: 6141358,
+      tail: "fork",
+      frequency: 2.8
+    },
+    yellowWatchmanGoby: {
+      length: 0.6,
+      height: 0.08,
+      width: 0.065,
+      color: 15911970,
+      fin: 14924340,
+      tail: "round",
+      frequency: 2
+    },
     clownfish: {
       length: 0.53,
       height: 0.135,
@@ -32123,9 +33037,9 @@
   };
   function bodyGeometry(p) {
     const positions = [], uvs = [], indices = [];
-    const rows = 48, sides = 32;
-    for (let i = 0; i <= rows; i++) {
-      const u = i / rows;
+    const rows2 = 48, sides = 32;
+    for (let i = 0; i <= rows2; i++) {
+      const u = i / rows2;
       const envelope = Math.pow(Math.sin(Math.PI * u), 0.7) * (0.55 + 0.65 * u);
       const radius = 0.055 + envelope * 0.95;
       for (let j = 0; j <= sides; j++) {
@@ -32136,7 +33050,7 @@
           Math.sin(a) * p.width * radius
         );
         uvs.push(u, j / sides);
-        if (i < rows && j < sides) {
+        if (i < rows2 && j < sides) {
           const k = i * (sides + 1) + j;
           indices.push(
             k,
@@ -32241,17 +33155,17 @@
     return group;
   }
   function sphere(group, material2, position, scale) {
-    const mesh = new Mesh(new SphereGeometry(1, 16, 12), material2);
-    mesh.position.set(...position);
-    mesh.scale.set(...scale);
-    group.add(mesh);
-    return mesh;
+    const mesh2 = new Mesh(new SphereGeometry(1, 16, 12), material2);
+    mesh2.position.set(...position);
+    mesh2.scale.set(...scale);
+    group.add(mesh2);
+    return mesh2;
   }
-  function createFishModel(fish, resolvedId = fish.templateId) {
+  function createFishModel(fish2, resolvedId = fish2.templateId) {
     const p = FISH_PROFILES[resolvedId];
     if (!p) return null;
     const group = new Group();
-    group.userData = { id: fish.id, templateId: resolvedId, isFish: true };
+    group.userData = { id: fish2.id, templateId: resolvedId, isFish: true };
     const bodyMat = new MeshPhysicalMaterial({
       map: fishTexture(resolvedId),
       roughness: 0.4,
@@ -32493,16 +33407,16 @@
     };
     return group;
   }
-  function animateFishModel(mesh, fish, timeSeconds, deltaSeconds) {
-    const rig = mesh.userData.fishRig;
+  function animateFishModel(mesh2, fish2, timeSeconds, deltaSeconds) {
+    const rig = mesh2.userData.fishRig;
     if (!rig) return;
-    const active = fish.alive !== false;
-    const speed = Math.min(1.5, Math.max(0, mesh.userData.swimSpeed || 0));
+    const active = fish2.alive !== false;
+    const speed = Math.min(1.5, Math.max(0, mesh2.userData.swimSpeed || 0));
     const target = active ? 0.012 + speed * 0.027 : 0;
     rig.swim.amplitude.value += (target - rig.swim.amplitude.value) * (1 - Math.exp(-8 * deltaSeconds));
     const rate = rig.profile.frequency + speed * 2;
     rig.swim.time.value += deltaSeconds * rate * Math.PI * 2 * (active ? 1 : 0);
-    rig.swim.phase.value = mesh.userData.animationPhase || 0;
+    rig.swim.phase.value = mesh2.userData.animationPhase || 0;
     const phase = rig.swim.time.value + rig.swim.phase.value;
     const amp = rig.swim.amplitude.value;
     rig.tail.position.z = Math.sin(phase - 3.4) * amp;
@@ -32512,253 +33426,10 @@
     for (const f of rig.paired) {
       const side = f.userData.side;
       f.rotation.y = side * (0.45 + (active ? Math.sin(phase * 1.5 + side) * 0.32 : 0));
-      f.rotation.x = side * (0.75 + Math.min(0.25, Math.abs(mesh.userData.turnRate || 0) * 0.15));
+      f.rotation.x = side * (0.75 + Math.min(0.25, Math.abs(mesh2.userData.turnRate || 0) * 0.15));
     }
     if (rig.sail)
       rig.sail.rotation.z = active ? -0.12 + Math.sin(timeSeconds * 3) * 0.1 : -0.5;
-  }
-
-  // js/graphics/FishMotion.js
-  var clamp3 = (n, low, high) => Math.max(low, Math.min(high, n));
-  var finite = (n, fallback2) => Number.isFinite(n) ? n : fallback2;
-  var smooth = (n) => n * n * (3 - 2 * n);
-  function fishSeed(id) {
-    let hash = 2166136261;
-    for (const char of String(id ?? 0))
-      hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
-    hash ^= hash >>> 16;
-    hash = Math.imul(hash, 2146121005);
-    hash ^= hash >>> 15;
-    return (hash >>> 0) / 4294967296;
-  }
-  var heightCaches = /* @__PURE__ */ new WeakMap();
-  var shelterCaches = /* @__PURE__ */ new WeakMap();
-  var coralBounds = /* @__PURE__ */ new WeakMap();
-  function shelterAnchor(habitat, seed) {
-    if (!habitat?.rockPoints?.length) return null;
-    let edges = shelterCaches.get(habitat);
-    if (!edges) {
-      const points = [...habitat.rockPoints].sort((a, b) => b.z - a.z);
-      edges = points.slice(0, Math.max(1, Math.ceil(points.length / 3)));
-      shelterCaches.set(habitat, edges);
-    }
-    return edges[Math.floor(seed * edges.length)];
-  }
-  function coralObstacle(mesh) {
-    const signature = `${mesh.position.x}:${mesh.position.y}:${mesh.position.z}:${mesh.scale.x}:${mesh.scale.y}:${mesh.scale.z}`;
-    let cached2 = coralBounds.get(mesh);
-    if (cached2?.signature === signature) return cached2;
-    mesh.updateMatrixWorld(true);
-    const bounds = new Box3().setFromObject(mesh);
-    if (bounds.isEmpty()) return null;
-    cached2 = {
-      signature,
-      x: (bounds.min.x + bounds.max.x) / 2,
-      z: (bounds.min.z + bounds.max.z) / 2,
-      minY: bounds.min.y - 0.12,
-      maxY: bounds.max.y + 0.15,
-      radius: Math.max(
-        (bounds.max.x - bounds.min.x) / 2,
-        (bounds.max.z - bounds.min.z) / 2
-      ) + 0.18
-    };
-    coralBounds.set(mesh, cached2);
-    return cached2;
-  }
-  function habitatHeight(habitat, x, z) {
-    if (!habitat?.sample) return -1.32;
-    let cache2 = heightCaches.get(habitat);
-    if (!cache2) {
-      cache2 = /* @__PURE__ */ new Map();
-      heightCaches.set(habitat, cache2);
-    }
-    const cell = 0.1;
-    const ix = Math.floor(clamp3(finite(x, 0), -2.4, 2.4) / cell);
-    const iz = Math.floor(clamp3(finite(z, 0), -1.2, 1.2) / cell);
-    let highest = finite(habitat.floorY, -1.32);
-    for (const gx of [ix, ix + 1]) {
-      for (const gz of [iz, iz + 1]) {
-        const key = `${gx}:${gz}`;
-        if (!cache2.has(key))
-          cache2.set(
-            key,
-            finite(habitat.sample(gx * cell, gz * cell)?.y, highest)
-          );
-        highest = Math.max(highest, cache2.get(key));
-      }
-    }
-    return highest;
-  }
-  function fishTarget(fish, seconds, surfaceHeight = () => -1.32, habitat = null) {
-    const species = String(fish.templateId).toLowerCase();
-    const seed = fishSeed(fish.id);
-    const phase = seed * Math.PI * 2;
-    const t = Math.max(0, finite(seconds, 0));
-    const homeX = (seed - 0.5) * 3.1;
-    const homeZ = 0.42 + Math.sin(phase * 3) * 0.38;
-    let x, y, z, speed, behavior;
-    if (species === "yellowtang" || species === "bluehippotang") {
-      const angle = t * 0.28 + phase;
-      x = Math.sin(angle) * 2.1;
-      z = Math.cos(angle) * 0.9;
-      y = 0.38 + Math.sin(angle * 1.6) * 0.23;
-      speed = 0.72;
-      behavior = "cruising";
-    } else if (species === "sixlinewrasse" || species === "flameangel") {
-      const angle = t * (species === "sixlinewrasse" ? 0.48 : 0.26) + phase;
-      x = Math.sin(angle) * 1.85;
-      z = Math.sin(angle * 0.73 + phase) * 0.82;
-      y = -0.35 + Math.cos(angle * 1.3) * 0.2;
-      speed = species === "sixlinewrasse" ? 0.85 : 0.5;
-      behavior = species === "sixlinewrasse" ? "darting" : "grazing";
-    } else if (species === "mandaringoby") {
-      const angle = t * 0.11 + phase;
-      x = Math.sin(angle) * 1.75;
-      z = 0.55 + Math.sin(angle * 1.4) * 0.37;
-      y = -2;
-      speed = 0.22;
-      behavior = "foraging";
-    } else if (species === "tailspotblenny") {
-      const cycle = t / 9 + seed * 4;
-      const step = Math.floor(cycle);
-      const progress = smooth(clamp3((cycle % 1 - 0.7) / 0.3, 0, 1));
-      const a = phase + step * 0.9;
-      const b = a + 0.9;
-      x = homeX * 0.7 + 0.4 * (Math.sin(a) * (1 - progress) + Math.sin(b) * progress);
-      z = 0.12 + 0.3 * (Math.cos(a) * (1 - progress) + Math.cos(b) * progress);
-      const points = habitat?.rockPoints;
-      if (points?.length) {
-        const anchor = points[Math.floor(seed * points.length)];
-        let neighbor = anchor;
-        let best = Infinity;
-        for (const point of points) {
-          const distance = Math.hypot(
-            point.x - anchor.x,
-            point.z - anchor.z
-          );
-          if (distance > 0.25 && distance < best) {
-            best = distance;
-            neighbor = point;
-          }
-        }
-        const fraction = step % 2 ? 1 - progress : progress;
-        x = anchor.x + (neighbor.x - anchor.x) * fraction;
-        z = anchor.z + (neighbor.z - anchor.z) * fraction;
-      }
-      y = -2;
-      speed = progress > 0 ? 0.5 : 0.16;
-      behavior = progress > 0 ? "grazing" : "perching";
-    } else {
-      const radius = species === "clownfish" ? 0.36 : species === "banggaicardinal" ? 0.22 : 0.3;
-      const angle = t * 0.55 + phase;
-      x = homeX + Math.sin(angle) * radius;
-      z = homeZ + Math.cos(angle * 0.8) * radius * 0.55;
-      y = species === "firefishgoby" ? -0.62 : species === "royalgramma" ? -0.48 : -0.05;
-      y += Math.sin(angle * 0.75) * 0.08;
-      if (species === "royalgramma" || species === "firefishgoby") {
-        const anchor = shelterAnchor(habitat, seed);
-        if (anchor) {
-          x = anchor.x + Math.sin(angle) * 0.2;
-          z = anchor.z + 0.18 + Math.cos(angle * 0.8) * 0.12;
-          y = anchor.y + (species === "firefishgoby" ? 0.36 : 0.22) + Math.sin(angle * 0.75) * 0.06;
-        }
-      }
-      speed = species === "banggaicardinal" ? 0.18 : 0.3;
-      behavior = "hovering";
-    }
-    x = clamp3(x, -2.3, 2.3);
-    z = clamp3(z, -1.08, 1.08);
-    const bottomFish = species === "tailspotblenny" || species === "mandaringoby";
-    const clearance2 = bottomFish ? 0.1 : 0.26;
-    const floor = finite(surfaceHeight(x, z), -1.32);
-    y = Math.max(y, floor + clearance2);
-    return { x, y: clamp3(y, -1.22, 1.08), z, speed, behavior, clearance: clearance2 };
-  }
-  function advanceFishMotion(mesh, fish, seconds, delta, context = {}) {
-    const dt = clamp3(finite(delta, 0), 0, 0.1);
-    if (!dt || fish.alive === false) return;
-    const surfaceHeight = context.surfaceHeight || ((x, z) => habitatHeight(context.habitat, x, z));
-    const target = fishTarget(fish, seconds, surfaceHeight, context.habitat);
-    const position = mesh.position;
-    let dx = target.x - position.x;
-    let dy = target.y - position.y;
-    let dz = target.z - position.z;
-    for (const other of context.fishMeshes?.values() || []) {
-      if (other === mesh || other.userData.dead) continue;
-      let sx = position.x - other.position.x;
-      const sy = position.y - other.position.y;
-      let sz = position.z - other.position.z;
-      let distance2 = Math.hypot(sx, sy, sz);
-      if (distance2 < 0.65) {
-        if (distance2 < 1e-3) {
-          const phase = fishSeed(fish.id) * Math.PI * 2;
-          sx = Math.cos(phase) * 0.01;
-          sz = Math.sin(phase) * 0.01;
-          distance2 = 0.01;
-        }
-        const repulsion = (0.65 - distance2) * 2.2 / distance2;
-        dx += sx * repulsion;
-        dy += sy * repulsion;
-        dz += sz * repulsion;
-      }
-    }
-    const obstacles = [];
-    for (const colony of context.coralMeshes?.values() || []) {
-      const obstacle = coralObstacle(colony);
-      if (!obstacle || position.y < obstacle.minY || position.y > obstacle.maxY)
-        continue;
-      obstacles.push(obstacle);
-      const sx = position.x - obstacle.x, sz = position.z - obstacle.z;
-      const distance2 = Math.hypot(sx, sz);
-      if (distance2 > 1e-4 && distance2 < obstacle.radius + 0.25) {
-        const nx = sx / distance2, nz = sz / distance2;
-        const inward = Math.min(0, dx * nx + dz * nz);
-        dx -= inward * nx;
-        dz -= inward * nz;
-        const turn = fishSeed(fish.id) > 0.5 ? 1 : -1;
-        const steering = (obstacle.radius + 0.25 - distance2) * 1.8;
-        dx += (nx - nz * turn) * steering;
-        dz += (nz + nx * turn) * steering;
-      }
-    }
-    const distance = Math.hypot(dx, dy, dz);
-    const step = Math.min(
-      distance * (1 - Math.exp(-2.4 * dt)),
-      target.speed * dt
-    );
-    if (distance > 1e-5) {
-      position.x = clamp3(position.x + dx / distance * step, -2.35, 2.35);
-      position.y = clamp3(position.y + dy / distance * step, -1.22, 1.08);
-      position.z = clamp3(position.z + dz / distance * step, -1.1, 1.1);
-    }
-    for (const obstacle of obstacles) {
-      if (position.y < obstacle.minY || position.y > obstacle.maxY) continue;
-      const sx = position.x - obstacle.x, sz = position.z - obstacle.z;
-      if (Math.hypot(sx, sz) >= obstacle.radius) continue;
-      let best = null;
-      const angle = Math.atan2(sz, sx);
-      for (let i = 0; i < 16; i++) {
-        const a = angle + i * Math.PI / 8;
-        const x = obstacle.x + Math.cos(a) * obstacle.radius;
-        const z = obstacle.z + Math.sin(a) * obstacle.radius;
-        if (Math.abs(x) > 2.35 || Math.abs(z) > 1.1) continue;
-        const distance2 = Math.hypot(position.x - x, position.z - z);
-        if (!best || distance2 < best.distance) best = { x, z, distance: distance2 };
-      }
-      if (best) {
-        position.x = best.x;
-        position.z = best.z;
-      }
-    }
-    position.y = Math.max(
-      position.y,
-      Math.min(
-        1.08,
-        finite(surfaceHeight(position.x, position.z), -1.32) + target.clearance
-      )
-    );
-    mesh.userData.behavior = target.behavior;
-    mesh.userData.motionSpeed = step / dt;
   }
 
   // node_modules/three/examples/jsm/utils/BufferGeometryUtils.js
@@ -33330,6 +34001,8 @@
   // js/graphics/CoralModels.js
   var mergeBufferGeometries = BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
   var IDS = /* @__PURE__ */ new Set([
+    "toadstoolLeather",
+    "candyCaneCoral",
     "zoanthids",
     "greenStarPolyps",
     "mushrooms",
@@ -33357,15 +34030,15 @@
       emissiveIntensity: glow
     });
   }
-  function batch(parent, geometries, mat2) {
+  function batch(parent, geometries, mat3) {
     if (!geometries.length) return;
     const merged = mergeBufferGeometries(
       geometries.map((g) => g.index ? g.toNonIndexed() : g)
     );
-    const mesh = new Mesh(merged, mat2);
-    parent.add(mesh);
+    const mesh2 = new Mesh(merged, mat3);
+    parent.add(mesh2);
     geometries.forEach((g) => g.dispose());
-    return mesh;
+    return mesh2;
   }
   function bead(x, y, z, r, stretch = [1, 1, 1]) {
     const g = new SphereGeometry(r, 10, 7);
@@ -33491,13 +34164,13 @@
       batch(root, tips, material(fine ? 16767964 : 12053759, 0.12));
       batch(root, pores, material(fine ? 8533853 : 2517911));
     } else if (id === "montipora") {
-      const mat2 = material(15104067, 0.035);
-      mat2.side = DoubleSide;
-      mat2.vertexColors = true;
+      const mat3 = material(15104067, 0.035);
+      mat3.side = DoubleSide;
+      mat3.vertexColors = true;
       for (let i = 0; i < 4; i++) {
         const plate = new Mesh(
           disk(0.36 - i * 0.045, 0.08, 7, i),
-          mat2
+          mat3
         );
         plate.position.set(
           Math.sin(i * 2) * 0.09,
@@ -33507,10 +34180,53 @@
         plate.rotation.set(i * 0.06, i * 1.4, 0.12 * Math.sin(i));
         root.add(plate);
       }
+    } else if (id === "toadstoolLeather") {
+      root.add(
+        new Mesh(
+          stem(vec(0, 0, 0), vec(0, 0.5, 0), 0.12, 0.09),
+          material(11967091)
+        )
+      );
+      const cap = new Mesh(
+        disk(0.42, 0.055, 8, 0.7),
+        material(12166278)
+      );
+      cap.position.y = 0.5;
+      root.add(cap);
+      const polyps = [];
+      for (let i = 0; i < 90; i++) {
+        const a = i * 2.39996, r = Math.sqrt((i + 0.5) / 90) * 0.39;
+        const x = Math.cos(a) * r, z = Math.sin(a) * r, y = 0.5 + 0.055 * (r / 0.42) ** 2;
+        polyps.push(stem(vec(x, y, z), vec(x, y + 0.06, z), 4e-3));
+        polyps.push(bead(x, y + 0.065, z, 0.012));
+      }
+      batch(root, polyps, material(12903853, 0.03));
+    } else if (id === "candyCaneCoral") {
+      const branches = [], heads = [], mouths = [];
+      for (let i = 0; i < 7; i++) {
+        const a = i * 2.4, r = i === 0 ? 0 : 0.25, x = Math.cos(a) * r, z = Math.sin(a) * r, y = 0.32 + rand(i) * 0.16;
+        branches.push(
+          stem(vec(x * 0.4, 0.03, z * 0.4), vec(x, y, z), 0.035, 0.05)
+        );
+        heads.push(bead(x, y, z, 0.11, [1, 0.55, 1]));
+        const disc = disk(0.09, -0.012, 12, i);
+        disc.translate(x, y + 0.055, z);
+        mouths.push(disc);
+        mouths.push(bead(x, y + 0.057, z, 0.018, [1, 0.2, 0.4]));
+      }
+      batch(root, branches, material(9731947));
+      batch(root, heads, material(6462839));
+      const oral = material(8643762, 0.08);
+      oral.side = DoubleSide;
+      mouths.forEach((geometry) => {
+        geometry.deleteAttribute("uv");
+        geometry.deleteAttribute("color");
+      });
+      batch(root, mouths, oral);
     } else if (id === "mushrooms") {
-      const mat2 = material(3911073, 0.05);
-      mat2.side = DoubleSide;
-      mat2.vertexColors = true;
+      const mat3 = material(3911073, 0.05);
+      mat3.side = DoubleSide;
+      mat3.vertexColors = true;
       for (let i = 0; i < 7; i++) {
         const a = i * 2.4, rad = i ? 0.22 : 0;
         const polyp = new Group();
@@ -33519,7 +34235,7 @@
           0.13 + rand(i) * 0.04,
           Math.sin(a) * rad
         );
-        polyp.add(new Mesh(disk(0.15, -0.025, 9, i), mat2));
+        polyp.add(new Mesh(disk(0.15, -0.025, 9, i), mat3));
         const bumps = [];
         for (let j = 0; j < 35; j++) {
           const t = j * 2.4, r = 0.125 * Math.sqrt(j / 35);
@@ -33658,9 +34374,9 @@
     }
     return root;
   }
-  function animateCoralModel(mesh, coral, timeSeconds) {
+  function animateCoralModel(mesh2, coral, timeSeconds) {
     const extension = coral.alive === false ? 0.2 : MathUtils.clamp((coral.health ?? 100) / 100, 0.35, 1);
-    for (const motion of mesh.userData.motions || []) {
+    for (const motion of mesh2.userData.motions || []) {
       const wave = Math.sin(timeSeconds * 1.35 + motion.phase);
       motion.group.rotation.z = wave * (motion.kind === "lps" ? 0.16 : 0.06);
       motion.group.rotation.x = Math.sin(timeSeconds * 0.9 + motion.phase) * 0.09;
@@ -33673,7 +34389,83 @@
     }
   }
 
+  // js/graphics/PlacementRules.js
+  var snapRotation = (degrees) => Math.round(degrees / 15) * 15;
+  function applySurfaceTransform(mesh2, position, normal, rotation, baseOffset = 0) {
+    const up = new Vector3(0, 1, 0);
+    const n = new Vector3(normal.x, normal.y, normal.z).normalize();
+    mesh2.quaternion.setFromUnitVectors(up, n);
+    mesh2.quaternion.multiply(
+      new Quaternion().setFromAxisAngle(up, rotation)
+    );
+    mesh2.position.set(position.x, position.y, position.z).addScaledVector(n, baseOffset);
+    mesh2.updateMatrixWorld(true);
+  }
+  function validatePlacement({
+    point,
+    normal,
+    radius,
+    height,
+    spec,
+    occupied = [],
+    selectedId,
+    kind,
+    supportId
+  }) {
+    if (!point || !normal || ![
+      point.x,
+      point.y,
+      point.z,
+      normal.x,
+      normal.y,
+      normal.z,
+      radius,
+      height
+    ].every(Number.isFinite) || radius <= 0 || height <= 0)
+      return { valid: false, reason: "Point at a solid aquarium surface." };
+    if (point.y < -spec.height / 2 - 1e-3)
+      return {
+        valid: false,
+        reason: "Choose a surface inside the aquarium."
+      };
+    if (normal.y <= 0.7)
+      return { valid: false, reason: "Choose a stable upward-facing ledge." };
+    if (!containsPoint(spec, point.x, point.z, radius + 5e-3))
+      return {
+        valid: false,
+        reason: "Keep the whole object inside the tank."
+      };
+    if (point.y + height > waterLevel(spec) - 5e-3)
+      return {
+        valid: false,
+        reason: "The object must remain below the water surface."
+      };
+    for (const item of occupied) {
+      if (item.id === selectedId || item.id === supportId) continue;
+      const gap = kind === "coral" || item.kind === "coral" ? 0.012 : 3e-3;
+      if (!(kind === "coral" && item.kind === "coral") && (point.y + height <= item.minY + 2e-3 || point.y >= item.maxY - 2e-3))
+        continue;
+      if (Math.hypot(point.x - item.x, point.z - item.z) < radius + item.radius + gap)
+        return {
+          valid: false,
+          reason: "Leave room between neighboring animals and rocks."
+        };
+    }
+    return { valid: true, reason: "Click to place. Rotate in 15\xB0 steps." };
+  }
+
   // js/graphics/CoralPlacement.js
+  function applyCoralPlacement(mesh2, item) {
+    const offset = mesh2.userData.coralBaseOffset * mesh2.scale.x - 1e-3;
+    applySurfaceTransform(
+      mesh2,
+      item.position,
+      item.normal || { x: 0, y: 1, z: 0 },
+      item.rotation || 0,
+      offset
+    );
+    mesh2.userData.placedItemId = item.id;
+  }
   var SPS = /* @__PURE__ */ new Set(["acropora", "birdsnest", "montipora"]);
   var LPS = /* @__PURE__ */ new Set(["hammerCoral", "torchCoral", "frogspawn"]);
   var SPREADING = /* @__PURE__ */ new Set(["greenStarPolyps", "xeniaCorals"]);
@@ -33682,74 +34474,100 @@
     const preference = SPS.has(coral.templateId) ? rock ? point.y * 0.5 + 2 : 0 : SPREADING.has(coral.templateId) ? rock ? 0 : 1 : LPS.has(coral.templateId) ? rock ? 0.25 : 0.5 : rock ? 0.5 : 0;
     return preference + (Math.sin(point.x * 17 + point.z * 23 + index * 7) + 1) * 0.03;
   }
-  function syncCoralPlacements(corals, meshes, habitat) {
-    const signature = corals.map((coral) => `${coral.id}:${coral.templateId}:${coral.scale}`).join("|");
+  function syncCoralPlacements(corals, meshes, habitat, state = habitat.state) {
+    state.placedItems ||= [];
+    const signature = JSON.stringify([
+      corals.map((coral) => [
+        coral.id,
+        coral.templateId,
+        physicalSize(coral, "coral")
+      ]),
+      state.placedItems.filter((item) => item.kind === "coral")
+    ]);
     if (habitat.coralSignature === signature && habitat.coralMeshes === meshes)
       return;
-    habitat.coralSignature = signature;
     habitat.coralMeshes = meshes;
     const occupied = [];
     for (let index = 0; index < corals.length; index++) {
       const coral = corals[index];
-      const mesh = meshes.get(coral.id);
-      if (!mesh) continue;
-      const requestedScale = Number.isFinite(coral.scale) ? Math.max(0.4, Math.min(1.6, coral.scale)) : 1;
-      mesh.scale.setScalar(requestedScale * habitat.coralScale);
-      const radius = mesh.userData.coralRadius * mesh.scale.x;
-      const gap = LPS.has(coral.templateId) ? 0.12 : SPREADING.has(coral.templateId) ? 0.1 : 0.055;
-      const candidates = habitat.candidates.filter(
-        (p) => p.normal.y > 0.82 && Math.abs(p.x) + radius < 2.88 && Math.abs(p.z) + radius < 1.38 && occupied.every(
-          (other) => Math.hypot(p.x - other.x, p.z - other.z) >= radius + other.radius + Math.max(gap, other.gap)
-        )
+      const mesh2 = meshes.get(coral.id);
+      if (!mesh2) continue;
+      const diameter = physicalSize(coral, "coral");
+      mesh2.userData.physicalDiameterM = diameter;
+      mesh2.scale.setScalar(diameter / (2 * mesh2.userData.coralRadius));
+      mesh2.userData.placementRadius = diameter / 2;
+      const gap = 0.012;
+      const valid = (p) => p.normal.y > 0.7 && containsPoint(habitat.spec, p.x, p.z, diameter / 2 + 5e-3) && p.y + mesh2.userData.coralHeight * mesh2.scale.x < waterLevel(habitat.spec) - 5e-3 && occupied.every(
+        (other) => Math.hypot(p.x - other.x, p.z - other.z) >= diameter / 2 + other.radius + gap
       );
-      candidates.sort(
-        (a, b) => placementScore(b, coral, index) - placementScore(a, coral, index)
+      let item = state.placedItems.find(
+        (entry) => entry.kind === "coral" && entry.livestockId === coral.id
       );
-      let point = candidates[0];
-      if (!point) {
-        const ranked = habitat.candidates.map((p) => ({
-          p,
-          clearance: Math.min(
-            2.88 - Math.abs(p.x),
-            1.38 - Math.abs(p.z),
-            ...occupied.map(
-              (other) => Math.hypot(p.x - other.x, p.z - other.z) - other.radius - Math.max(gap, other.gap)
-            )
-          )
-        })).filter(
-          ({ p }) => p.normal.y > 0.82 && Math.abs(p.x) < 2.55 && Math.abs(p.z) < 1.1
-        ).sort((a, b) => b.clearance - a.clearance);
-        point = ranked[0]?.p || habitat.sample(0, 0);
-        const fit = Math.max(
-          0.015,
-          (ranked[0]?.clearance || radius) - 0.015
-        );
-        mesh.scale.multiplyScalar(Math.min(1, fit / radius));
+      let point = item ? habitat.sample(item.position.x, item.position.z) : null;
+      if (point && !valid(point)) {
+        mesh2.visible = false;
+        coral.placementStatus = "needs-placement";
+        continue;
       }
-      mesh.position.set(
-        point.x,
-        point.y + mesh.userData.coralBaseOffset * mesh.scale.x - 0.012,
-        point.z
-      );
-      mesh.userData.habitat = point.type;
-      mesh.userData.surfaceY = point.y;
-      mesh.userData.placementRadius = mesh.userData.coralRadius * mesh.scale.x;
-      occupied.push({ ...point, radius: mesh.userData.placementRadius, gap });
-      coral.x = mesh.position.x;
-      coral.y = mesh.position.y;
-      coral.z = mesh.position.z;
+      if (!point) {
+        const candidates = habitat.candidates.filter(valid);
+        candidates.sort(
+          (a, b) => placementScore(b, coral, index) - placementScore(a, coral, index)
+        );
+        point = candidates[0];
+      }
+      if (!point) {
+        mesh2.visible = false;
+        coral.placementStatus = "needs-placement";
+        continue;
+      }
+      if (!item) {
+        item = {
+          id: "coral-" + coral.id,
+          kind: "coral",
+          livestockId: coral.id,
+          rotation: 0,
+          size: diameter
+        };
+        state.placedItems.push(item);
+      }
+      item.position = { x: point.x, y: point.y, z: point.z };
+      item.normal = {
+        x: point.normal.x,
+        y: point.normal.y,
+        z: point.normal.z
+      };
+      item.supportId = point.surfaceId;
+      item.size = diameter;
+      applyCoralPlacement(mesh2, item);
+      mesh2.visible = true;
+      mesh2.userData.habitat = point.type;
+      mesh2.userData.surfaceY = point.y;
+      occupied.push({ ...point, radius: diameter / 2 });
+      coral.x = mesh2.position.x;
+      coral.y = mesh2.position.y;
+      coral.z = mesh2.position.z;
       coral.habitat = point.type;
+      coral.placementStatus = "placed";
     }
+    habitat.coralSignature = JSON.stringify([
+      corals.map((coral) => [
+        coral.id,
+        coral.templateId,
+        physicalSize(coral, "coral")
+      ]),
+      state.placedItems.filter((item) => item.kind === "coral")
+    ]);
   }
-  function measureCoralMount(mesh) {
-    const originalPosition = mesh.position.clone();
-    const originalScale = mesh.scale.clone();
-    mesh.position.set(0, 0, 0);
-    mesh.scale.setScalar(1);
-    mesh.updateMatrixWorld(true);
+  function measureCoralMount(mesh2) {
+    const originalPosition = mesh2.position.clone();
+    const originalScale = mesh2.scale.clone();
+    mesh2.position.set(0, 0, 0);
+    mesh2.scale.setScalar(1);
+    mesh2.updateMatrixWorld(true);
     const vertex = new Vector3();
     let radius = 0;
-    mesh.traverse((part) => {
+    mesh2.traverse((part) => {
       const positions = part.geometry?.attributes.position;
       if (!positions) return;
       for (let i = 0; i < positions.count; i++) {
@@ -33757,16 +34575,20 @@
         radius = Math.max(radius, Math.hypot(vertex.x, vertex.z));
       }
     });
-    mesh.userData.coralRadius = radius + 0.025;
-    const base = new Box3().setFromObject(mesh.children[0] || mesh);
-    mesh.userData.coralBaseOffset = -base.min.y;
-    mesh.position.copy(originalPosition);
-    mesh.scale.copy(originalScale);
+    mesh2.userData.coralRadius = radius + 0.025;
+    const bounds = new Box3().setFromObject(mesh2);
+    mesh2.userData.coralHeight = bounds.max.y - bounds.min.y;
+    const base = new Box3().setFromObject(mesh2.children[0] || mesh2);
+    mesh2.userData.coralBaseOffset = -base.min.y;
+    mesh2.position.copy(originalPosition);
+    mesh2.scale.copy(originalScale);
   }
 
   // js/graphics/InvertebrateModels.js
   var mergeBufferGeometries2 = BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
   var IDS2 = /* @__PURE__ */ new Set([
+    "trochusSnail",
+    "cerithSnail",
     "hermitCrab",
     "turboSnail",
     "nassariusSnail",
@@ -33775,7 +34597,7 @@
     "peppermintShrimp"
   ]);
   var v = (x, y, z) => new Vector3(x, y, z);
-  function mat(color, translucent = false) {
+  function mat2(color, translucent = false) {
     return new MeshPhysicalMaterial({
       color: new Color(color).convertSRGBToLinear(),
       roughness: 0.38,
@@ -33787,20 +34609,20 @@
     });
   }
   function sphere2(parent, material2, xyz, scale) {
-    const mesh = new Mesh(new SphereGeometry(1, 14, 10), material2);
-    mesh.position.set(...xyz);
-    mesh.scale.set(...scale);
-    parent.add(mesh);
-    return mesh;
+    const mesh2 = new Mesh(new SphereGeometry(1, 14, 10), material2);
+    mesh2.position.set(...xyz);
+    mesh2.scale.set(...scale);
+    parent.add(mesh2);
+    return mesh2;
   }
   function tube(parent, material2, points, radius, segments = 12) {
     const curve = new CatmullRomCurve3(points.map((p) => v(...p)));
-    const mesh = new Mesh(
+    const mesh2 = new Mesh(
       new TubeGeometry(curve, segments, radius, 6, false),
       material2
     );
-    parent.add(mesh);
-    return mesh;
+    parent.add(mesh2);
+    return mesh2;
   }
   function shell(parent, elongated = false) {
     const vertices = [], colors = [], indices = [];
@@ -33838,13 +34660,13 @@
     geo.setAttribute("color", new Float32BufferAttribute(colors, 3));
     geo.setIndex(indices);
     geo.computeVertexNormals();
-    const material2 = mat(16777215);
+    const material2 = mat2(16777215);
     material2.vertexColors = true;
-    const mesh = new Mesh(geo, material2);
-    mesh.position.set(-0.055, 0.055, 0);
-    mesh.userData.anatomicalPart = "shell";
-    parent.add(mesh);
-    return mesh;
+    const mesh2 = new Mesh(geo, material2);
+    mesh2.position.set(-0.055, 0.055, 0);
+    mesh2.userData.anatomicalPart = "shell";
+    parent.add(mesh2);
+    return mesh2;
   }
   function limb(root, color, side, index, shrimp = false) {
     const group = new Group();
@@ -33884,10 +34706,10 @@
       feelers: [],
       claws: []
     };
-    const black = mat(1055011), white = mat(16773340);
+    const black = mat2(1055011), white = mat2(16773340);
     if (id.includes("Snail")) {
-      const nassarius = id === "nassariusSnail";
-      const flesh = mat(nassarius ? 13022362 : 7834995);
+      const nassarius = id === "nassariusSnail" || id === "cerithSnail";
+      const flesh = mat2(nassarius ? 13022362 : 7834995);
       const foot = sphere2(
         root,
         flesh,
@@ -33903,7 +34725,14 @@
       );
       mantle.userData.anatomicalPart = "mantle";
       root.userData.mantle = mantle;
-      shell(root, nassarius);
+      const snailShell = shell(root, nassarius);
+      if (id === "trochusSnail") {
+        snailShell.scale.set(0.8, 1.5, 0.8);
+      }
+      if (id === "cerithSnail") {
+        snailShell.scale.set(0.7, 1.55, 0.7);
+        snailShell.rotation.z = 0.2;
+      }
       sphere2(root, flesh, [0.17, 0.065, 0], [0.07, 0.045, 0.065]);
       for (const side of [-1, 1]) {
         const antenna = new Group();
@@ -33940,7 +34769,7 @@
         );
     } else if (id.includes("Shrimp")) {
       const cleaner = id === "cleanerShrimp";
-      const flesh = mat(cleaner ? 15290677 : 15971749, !cleaner), red = mat(12922161);
+      const flesh = mat2(cleaner ? 15290677 : 15971749, !cleaner), red = mat2(12922161);
       sphere2(root, flesh, [0.065, 0.12, 0], [0.13, 0.07, 0.055]);
       const tail = new Group();
       tail.position.set(-0.04, 0.105, 0);
@@ -34046,7 +34875,7 @@
       }
     } else {
       const hermit = id === "hermitCrab";
-      const armor = mat(hermit ? 2579120 : 3635788), joint = mat(hermit ? 6533099 : 6003544);
+      const armor = mat2(hermit ? 2579120 : 3635788), joint = mat2(hermit ? 6533099 : 6003544);
       sphere2(
         root,
         armor,
@@ -34146,33 +34975,45 @@
     }
     return root;
   }
-  function animateInvertebrateModel(mesh, animal, timeSeconds, delta = 1 / 60) {
+  function animateInvertebrateModel(mesh2, animal, timeSeconds, delta = 1 / 60) {
     if (animal.alive === false) return;
-    if (mesh.userData.burrowGroup) {
-      const target = -(mesh.userData.burrowDepth || 0);
-      mesh.userData.burrowGroup.position.y += (target - mesh.userData.burrowGroup.position.y) * (1 - Math.exp(-2 * Math.max(0, delta)));
+    if (mesh2.userData.burrowGroup) {
+      const target = -(mesh2.userData.burrowDepth || 0);
+      mesh2.userData.burrowGroup.position.y += (target - mesh2.userData.burrowGroup.position.y) * (1 - Math.exp(-2 * Math.max(0, delta)));
     }
-    const stride = mesh.userData.swimSpeed === void 0 ? 1 : Math.min(1, mesh.userData.swimSpeed / 0.035);
-    for (const leg of mesh.userData.legs || []) {
+    const stride = mesh2.userData.swimSpeed === void 0 ? 1 : Math.min(1, mesh2.userData.swimSpeed / 0.035);
+    for (const leg of mesh2.userData.legs || []) {
       leg.group.rotation.y = Math.sin(timeSeconds * 4 + leg.phase) * 0.13 * stride;
       leg.group.rotation.x = Math.cos(timeSeconds * 4 + leg.phase) * 0.04 * stride;
     }
-    (mesh.userData.feelers || []).forEach((feeler, i) => {
+    (mesh2.userData.feelers || []).forEach((feeler, i) => {
       feeler.rotation.y = Math.sin(timeSeconds * 1.2 + i * 1.8) * 0.18;
       feeler.rotation.z = Math.sin(timeSeconds * 0.8 + i) * 0.08;
     });
-    (mesh.userData.claws || []).forEach((finger, i) => {
+    (mesh2.userData.claws || []).forEach((finger, i) => {
       finger.rotation.z = -0.15 - (0.5 + 0.5 * Math.sin(timeSeconds * 2.4 + i * 2)) * 0.3;
     });
-    if (mesh.userData.tail)
-      mesh.userData.tail.rotation.z = Math.sin(timeSeconds * 1.6) * 0.045;
-    if (mesh.userData.foot)
-      mesh.userData.foot.scale.y = 0.035 * (1 + Math.sin(timeSeconds * 2) * 0.06);
+    if (mesh2.userData.tail)
+      mesh2.userData.tail.rotation.z = Math.sin(timeSeconds * 1.6) * 0.045;
+    if (mesh2.userData.foot)
+      mesh2.userData.foot.scale.y = 0.035 * (1 + Math.sin(timeSeconds * 2) * 0.06);
   }
 
   // js/graphics/LivestockRenderer.js
+  function scaleWildlife(mesh2, animal, kind = "fish") {
+    const target = physicalSize(animal, kind);
+    if (!mesh2.userData.modelLength) {
+      const box2 = new Box3().setFromObject(mesh2);
+      mesh2.userData.modelLength = Math.max(
+        1e-3,
+        kind === "coral" ? Math.max(box2.max.x - box2.min.x, box2.max.z - box2.min.z) : box2.max.x - box2.min.x
+      );
+    }
+    mesh2.scale.setScalar(target / mesh2.userData.modelLength);
+    mesh2.userData[kind === "coral" ? "physicalDiameterM" : "physicalLengthM"] = target;
+  }
   var clamp4 = (value, min, max) => Math.max(min, Math.min(max, value));
-  var finite2 = (value, fallback2) => Number.isFinite(value) ? value : fallback2;
+  var finite = (value, fallback) => Number.isFinite(value) ? value : fallback;
   var blend = (rate, delta) => 1 - Math.exp(-rate * delta);
   var phaseFor = (id) => {
     let hash = 2166136261;
@@ -34208,141 +35049,163 @@
       };
       return aliases[String(templateId).toLowerCase()] || String(templateId);
     }
-    static createFishMesh(fish, context = null, time = 0) {
-      const id = this.resolveTemplateId(fish.templateId);
-      const mesh = createFishModel(fish, id) || new Group();
-      Object.assign(mesh.userData, {
-        id: fish.id,
+    static createFishMesh(fish2, context = null, time = 0) {
+      const id = this.resolveTemplateId(fish2.templateId);
+      const mesh2 = createFishModel(fish2, id) || new Group();
+      Object.assign(mesh2.userData, {
+        id: fish2.id,
         templateId: id,
         isFish: true,
-        animationPhase: phaseFor(fish.id),
+        animationPhase: phaseFor(fish2.id),
         swimSpeed: 0,
         turnRate: 0
       });
-      mesh.position.set(
-        (finite2(fish.x, 0.5) - 0.5) * 5,
-        (finite2(fish.y, 0.5) - 0.5) * 2.2,
-        (finite2(fish.z, 0.5) - 0.5) * 2.2
+      scaleWildlife(mesh2, fish2);
+      const spec = context?.habitat?.spec || getTankSpec(context?.state || {});
+      const initial = constrainPoint(
+        spec,
+        {
+          x: (finite(fish2.x, 0.5) - 0.5) * spec.width,
+          y: (finite(fish2.y, 0.5) - 0.5) * spec.height,
+          z: (finite(fish2.z, 0.5) - 0.5) * spec.depth
+        },
+        physicalSize(fish2) * 0.55
       );
+      mesh2.position.set(initial.x, initial.y, initial.z);
       if (context) {
         const surfaceHeight = context.surfaceHeight || ((x, z) => habitatHeight(context.habitat, x, z));
-        const target = fishTarget(fish, time * 1e-3, surfaceHeight, context.habitat);
-        mesh.position.set(target.x, target.y, target.z);
-        advanceFishMotion(mesh, fish, time * 1e-3, 1 / 60, context);
+        const target = fishTarget(
+          fish2,
+          time * 1e-3,
+          surfaceHeight,
+          context.habitat,
+          context.state
+        );
+        mesh2.position.set(target.x, target.y, target.z);
+        advanceFishMotion(mesh2, fish2, time * 1e-3, 1 / 60, context);
       }
-      mesh.rotation.order = "YXZ";
-      return mesh;
+      mesh2.rotation.order = "YXZ";
+      return mesh2;
     }
-    static updateFishAnimation(mesh, fish, time, delta = 1 / 60, context = null) {
-      if (!mesh || !fish) return;
-      const dt = clamp4(finite2(delta, 1 / 60), 0, 0.1);
-      const seconds = finite2(time, 0) * 1e-3;
-      const id = this.resolveTemplateId(fish.templateId);
-      const data = mesh.userData;
-      data.animationPhase ??= phaseFor(fish.id);
-      data.dead = fish.alive === false;
+    static updateFishAnimation(mesh2, fish2, time, delta = 1 / 60, context = null) {
+      if (!mesh2 || !fish2) return;
+      scaleWildlife(mesh2, fish2);
+      const spec = context?.habitat?.spec || getTankSpec(context?.state || {});
+      const dt = clamp4(finite(delta, 1 / 60), 0, 0.1);
+      const seconds = finite(time, 0) * 1e-3;
+      const id = this.resolveTemplateId(fish2.templateId);
+      const data = mesh2.userData;
+      data.animationPhase ??= phaseFor(fish2.id);
+      data.dead = fish2.alive === false;
       if (dt === 0) return;
-      if (fish.alive === false) {
-        mesh.position.y = Math.max(-1.12, mesh.position.y - 0.16 * dt);
-        mesh.rotation.x += angleDelta(Math.PI, mesh.rotation.x) * blend(2, dt);
+      if (fish2.alive === false) {
+        mesh2.position.y = Math.max(
+          -spec.height / 2 + physicalSize(fish2) * 0.2,
+          mesh2.position.y - physicalSize(fish2) * 0.4 * dt
+        );
+        mesh2.rotation.x += angleDelta(Math.PI, mesh2.rotation.x) * blend(2, dt);
         data.swimSpeed = 0;
         return;
       }
       if (context) {
-        const oldX = mesh.position.x, oldY = mesh.position.y, oldZ = mesh.position.z;
-        advanceFishMotion(mesh, fish, seconds, dt, context);
-        const dx2 = mesh.position.x - oldX, dy2 = mesh.position.y - oldY, dz2 = mesh.position.z - oldZ;
+        const oldX = mesh2.position.x, oldY = mesh2.position.y, oldZ = mesh2.position.z;
+        advanceFishMotion(mesh2, fish2, seconds, dt, context);
+        const dx2 = mesh2.position.x - oldX, dy2 = mesh2.position.y - oldY, dz2 = mesh2.position.z - oldZ;
         const speed2 = Math.hypot(dx2, dy2, dz2) / dt;
-        data.swimSpeed = finite2(data.swimSpeed, 0) + (speed2 - finite2(data.swimSpeed, 0)) * blend(6, dt);
+        data.swimSpeed = finite(data.swimSpeed, 0) + (speed2 - finite(data.swimSpeed, 0)) * blend(6, dt);
         let turn2 = 0;
         if (Math.hypot(dx2, dz2) > 1e-4) {
-          turn2 = angleDelta(Math.atan2(-dz2, dx2), mesh.rotation.y);
-          mesh.rotation.y += turn2 * blend(id === "sixLineWrasse" ? 8 : 4, dt);
+          turn2 = angleDelta(Math.atan2(-dz2, dx2), mesh2.rotation.y);
+          mesh2.rotation.y += turn2 * blend(id === "sixLineWrasse" ? 8 : 4, dt);
         }
         data.turnRate = turn2;
         const pitch2 = speed2 > 0.015 ? clamp4(Math.atan2(dy2, Math.hypot(dx2, dz2)), -0.35, 0.35) : 0;
-        mesh.rotation.z += (pitch2 - mesh.rotation.z) * blend(4, dt);
-        mesh.rotation.x += (clamp4(-turn2 * speed2 * 0.24, -0.32, 0.32) - mesh.rotation.x) * blend(5, dt);
-        animateFishModel(mesh, fish, seconds, dt);
+        mesh2.rotation.z += (pitch2 - mesh2.rotation.z) * blend(4, dt);
+        mesh2.rotation.x += (clamp4(-turn2 * speed2 * 0.24, -0.32, 0.32) - mesh2.rotation.x) * blend(5, dt);
+        animateFishModel(mesh2, fish2, seconds, dt);
         return;
       }
-      const targetX = (clamp4(finite2(fish.x, 0.5), 0.04, 0.96) - 0.5) * 5;
-      const targetY = (clamp4(finite2(fish.y, 0.5), 0.04, 0.96) - 0.5) * 2.2;
-      const targetZ = (clamp4(finite2(fish.z, 0.5), 0.04, 0.96) - 0.5) * 2.2;
-      const dx = targetX - mesh.position.x;
-      const dy = targetY - mesh.position.y;
-      const dz = targetZ - mesh.position.z;
+      const targetX = (clamp4(finite(fish2.x, 0.5), 0.04, 0.96) - 0.5) * spec.width;
+      const targetY = (clamp4(finite(fish2.y, 0.5), 0.04, 0.96) - 0.5) * spec.height;
+      const targetZ = (clamp4(finite(fish2.z, 0.5), 0.04, 0.96) - 0.5) * spec.depth;
+      const dx = targetX - mesh2.position.x;
+      const dy = targetY - mesh2.position.y;
+      const dz = targetZ - mesh2.position.z;
       const distance = Math.hypot(dx, dy, dz);
-      const response = fish.behaviorState === "darting" ? 7 : 5;
+      const response = fish2.behaviorState === "darting" ? 7 : 5;
       const move = blend(response, dt);
-      mesh.position.x += dx * move;
-      mesh.position.y += dy * move;
-      mesh.position.z += dz * move;
+      mesh2.position.x += dx * move;
+      mesh2.position.y += dy * move;
+      mesh2.position.z += dz * move;
       const speed = dt > 0 ? distance * move / dt : 0;
-      data.swimSpeed = finite2(data.swimSpeed, 0) + (speed - finite2(data.swimSpeed, 0)) * blend(6, dt);
+      data.swimSpeed = finite(data.swimSpeed, 0) + (speed - finite(data.swimSpeed, 0)) * blend(6, dt);
       let turn = 0;
       if (Math.hypot(dx, dz) > 4e-3) {
-        turn = angleDelta(Math.atan2(-dz, dx), mesh.rotation.y);
-        mesh.rotation.y += turn * blend(id === "sixLineWrasse" ? 8 : 4, dt);
+        turn = angleDelta(Math.atan2(-dz, dx), mesh2.rotation.y);
+        mesh2.rotation.y += turn * blend(id === "sixLineWrasse" ? 8 : 4, dt);
       }
       data.turnRate = turn;
       const pitch = distance > 8e-3 ? clamp4(Math.atan2(dy, Math.hypot(dx, dz)), -0.35, 0.35) : 0;
       const bank = clamp4(-turn * data.swimSpeed * 0.24, -0.32, 0.32);
-      mesh.rotation.z += (pitch - mesh.rotation.z) * blend(4, dt);
-      mesh.rotation.x += (bank - mesh.rotation.x) * blend(5, dt);
-      animateFishModel(mesh, fish, seconds, dt);
+      mesh2.rotation.z += (pitch - mesh2.rotation.z) * blend(4, dt);
+      mesh2.rotation.x += (bank - mesh2.rotation.x) * blend(5, dt);
+      animateFishModel(mesh2, fish2, seconds, dt);
     }
     static createCoralMesh(coral) {
       const id = this.resolveTemplateId(coral.templateId);
-      const mesh = createCoralModel(coral, id) || new Group();
+      const mesh2 = createCoralModel(coral, id) || new Group();
       const phase = phaseFor(coral.id);
-      Object.assign(mesh.userData, {
+      Object.assign(mesh2.userData, {
         id: coral.id,
         templateId: id,
         isCoral: true,
         animationPhase: phase
       });
-      mesh.position.set(
-        finite2(coral.x, Math.sin(phase) * 1.6),
-        finite2(coral.y, -1.15),
-        finite2(coral.z, Math.cos(phase) * 0.7)
+      mesh2.position.set(
+        finite(coral.x, 0),
+        finite(coral.y, -getTankSpec({}).height / 2),
+        finite(coral.z, 0)
       );
-      mesh.rotation.y = phase;
-      mesh.scale.setScalar(clamp4(finite2(coral.scale, 1), 0.4, 1.6));
-      measureCoralMount(mesh);
-      return mesh;
+      mesh2.rotation.y = phase;
+      measureCoralMount(mesh2);
+      mesh2.userData.physicalDiameterM = physicalSize(coral, "coral");
+      mesh2.scale.setScalar(
+        mesh2.userData.physicalDiameterM / (2 * mesh2.userData.coralRadius)
+      );
+      return mesh2;
     }
-    static updateCoralAnimation(mesh, coral, time, delta = 1 / 60) {
-      if (!mesh || !coral) return;
+    static updateCoralAnimation(mesh2, coral, time, delta = 1 / 60) {
+      if (!mesh2 || !coral) return;
       animateCoralModel(
-        mesh,
+        mesh2,
         coral,
-        finite2(time, 0) * 1e-3,
-        clamp4(finite2(delta, 1 / 60), 0, 0.1)
+        finite(time, 0) * 1e-3,
+        clamp4(finite(delta, 1 / 60), 0, 0.1)
       );
     }
     static createCleanupMesh(animal, context = {}) {
       const id = this.resolveTemplateId(animal.templateId);
-      const mesh = createInvertebrateModel(animal, id) || new Group();
-      Object.assign(mesh.userData, {
+      const mesh2 = createInvertebrateModel(animal, id) || new Group();
+      Object.assign(mesh2.userData, {
         id: animal.id,
         templateId: id,
         isCleanup: true,
         animationPhase: phaseFor(animal.id),
         swimSpeed: 0
       });
-      mesh.scale.setScalar(0.58);
-      this.updateCleanupAnimation(mesh, animal, 0, 0, context);
-      return mesh;
+      scaleWildlife(mesh2, animal, "cleanup");
+      this.updateCleanupAnimation(mesh2, animal, 0, 0, context);
+      return mesh2;
     }
-    static updateCleanupAnimation(mesh, animal, time, delta = 1 / 60, context = {}) {
-      if (!mesh || !animal) return;
-      updateCleanupMotion(mesh, animal, delta, context);
+    static updateCleanupAnimation(mesh2, animal, time, delta = 1 / 60, context = {}) {
+      if (!mesh2 || !animal) return;
+      scaleWildlife(mesh2, animal, "cleanup");
+      updateCleanupMotion(mesh2, animal, delta, context);
       animateInvertebrateModel(
-        mesh,
+        mesh2,
         animal,
-        finite2(time, 0) * 1e-3,
-        clamp4(finite2(delta, 1 / 60), 0, 0.1)
+        finite(time, 0) * 1e-3,
+        clamp4(finite(delta, 1 / 60), 0, 0.1)
       );
     }
   };
@@ -34351,7 +35214,10 @@
   function getHabitat(scene, state) {
     const environment = scene.userData.tankEnvironmentGroup;
     const cached2 = scene.userData.livestockHabitat;
-    if (cached2 && cached2.environment === environment) return cached2;
+    if (cached2 && cached2.environment === environment) {
+      cached2.state = state;
+      return cached2;
+    }
     const habitat = new Habitat(environment, state);
     scene.userData.livestockHabitat = habitat;
     return habitat;
@@ -34359,47 +35225,68 @@
   var Habitat = class {
     constructor(environment, state = {}) {
       this.environment = environment;
-      this.bounds = { minX: -2.85, maxX: 2.85, minZ: -1.35, maxZ: 1.35 };
-      this.floorY = -1.48;
-      this.floorType = "bottom";
+      this.state = state;
+      this.spec = getTankSpec(state);
+      this.bounds = {
+        minX: -this.spec.width / 2 + 0.015,
+        maxX: this.spec.width / 2 - 0.015,
+        minZ: -this.spec.depth / 2 + 0.015,
+        maxZ: this.spec.depth / 2 - 0.015
+      };
+      this.floorY = -this.spec.height / 2 + substrateHeight(state);
+      this.floorType = state.equipment?.substrate > 0 ? "sand" : "bottom";
       this.rocks = [];
+      this.surfaces = [];
       this.ray = new Raycaster(
         new Vector3(),
         new Vector3(0, -1, 0)
       );
       this.normalMatrix = new Matrix3();
-      this.coralScale = state.tankSize === "large" ? 0.52 : state.tankSize === "nano" ? 0.9 : 0.7;
       environment?.updateMatrixWorld(true);
       environment?.traverse((object) => {
-        if (object.userData.type === "sand") {
+        if (object.userData.type === "sand" || object.userData.type === "bottom") {
           this.floorY = new Box3().setFromObject(object).max.y;
-          this.floorType = "sand";
+          this.floorType = object.userData.type;
+          this.surfaces.push(object);
         }
-        if (object.isMesh && object.parent?.userData.type === "rocks")
+        if (object.isMesh && (object.userData.type === "rock" || object.parent?.userData.type === "rocks")) {
           this.rocks.push(object);
+          this.surfaces.push(object);
+        }
       });
       this.rockPoints = [];
       this.candidates = [];
-      for (let iz = 0; iz < 15; iz++) {
-        for (let ix = 0; ix < 29; ix++) {
-          const p = this.sample(-2.65 + ix * 0.19, -1.16 + iz * 0.165);
+      const stepsX = 32, stepsZ = 24;
+      for (let iz = 0; iz <= stepsZ; iz++) {
+        for (let ix = 0; ix <= stepsX; ix++) {
+          const x = -this.spec.width / 2 + (ix + 0.5) * this.spec.width / (stepsX + 1);
+          const z = -this.spec.depth / 2 + (iz + 0.5) * this.spec.depth / (stepsZ + 1);
+          if (!containsPoint(this.spec, x, z, 0.01)) continue;
+          const p = this.sample(x, z);
           this.candidates.push(p);
           if (p.type === "rock" && p.normal.y > 0.75)
             this.rockPoints.push(p);
         }
       }
     }
-    sample(x, z, { sandOnly = false } = {}) {
+    sample(x, z, { sandOnly = false, excludeId } = {}) {
       const floor = {
         x,
         y: this.floorY,
         z,
         type: this.floorType,
-        normal: new Vector3(0, 1, 0)
+        normal: new Vector3(0, 1, 0),
+        surfaceId: null
       };
       if (sandOnly || !this.rocks.length) return floor;
-      this.ray.set(new Vector3(x, 2.5, z), new Vector3(0, -1, 0));
-      const hit = this.ray.intersectObjects(this.rocks, false)[0];
+      this.ray.set(
+        new Vector3(x, this.spec.height, z),
+        new Vector3(0, -1, 0)
+      );
+      const targets = excludeId == null ? this.rocks : this.rocks.filter(
+        (mesh2) => mesh2.userData.placedItemId !== excludeId
+      );
+      const hit = this.ray.intersectObjects(targets, false)[0];
       if (!hit || hit.point.y <= this.floorY) return floor;
       this.normalMatrix.getNormalMatrix(hit.object.matrixWorld);
       return {
@@ -34407,8 +35294,382 @@
         y: hit.point.y,
         z,
         type: "rock",
-        normal: hit.face.normal.clone().applyMatrix3(this.normalMatrix).normalize()
+        normal: hit.face.normal.clone().applyMatrix3(this.normalMatrix).normalize(),
+        surfaceId: hit.object.userData.placedItemId ?? null
       };
+    }
+  };
+
+  // js/graphics/FeedingParticles.js
+  var FeedingParticles = class {
+    constructor(scene) {
+      this.positions = new Float32Array(36 * 3);
+      const geometry = new BufferGeometry();
+      geometry.setAttribute(
+        "position",
+        new BufferAttribute(this.positions, 3)
+      );
+      this.mesh = new Points(
+        geometry,
+        new PointsMaterial({
+          color: 14132567,
+          size: 25e-4,
+          transparent: true,
+          opacity: 0.9
+        })
+      );
+      this.mesh.visible = false;
+      scene.add(this.mesh);
+    }
+    update(state, delta) {
+      const event = state.feedingEvent;
+      const key = event ? `${event.id}:${event.timeHours}` : "";
+      if (key && key !== this.key) {
+        this.key = key;
+        const now2 = state.day * 24 + state.hour + state.minute / 60;
+        this.elapsed = now2 - event.timeHours > 2 ? 60 : 0;
+      }
+      if (!event) {
+        this.mesh.visible = false;
+        return;
+      }
+      this.elapsed = (this.elapsed || 0) + delta;
+      this.mesh.visible = this.elapsed < 40;
+      if (!this.mesh.visible) return;
+      const spec = getTankSpec(state);
+      this.mesh.material.color.setHex(
+        event.diet === "algae" ? 9812317 : 14527093
+      );
+      for (let i = 0; i < 36; i++) {
+        const angle = i * 2.39996;
+        const spread = 0.012 + this.elapsed * 1e-3;
+        const point = constrainPoint(
+          spec,
+          {
+            x: event.position.x + Math.sin(angle) * spread,
+            y: event.position.y - this.elapsed * (6e-3 + i % 5 * 1e-3),
+            z: event.position.z + Math.cos(angle) * spread
+          },
+          3e-3
+        );
+        this.positions.set([point.x, point.y, point.z], i * 3);
+      }
+      this.mesh.material.opacity = Math.min(0.9, (40 - this.elapsed) / 8);
+      this.mesh.geometry.attributes.position.needsUpdate = true;
+    }
+  };
+
+  // js/graphics/PlacementController.js
+  var PlacementController = class {
+    constructor({
+      scene,
+      camera,
+      canvas,
+      getState,
+      getMeshes,
+      getHabitat: getHabitat2,
+      onCommit = () => {
+      },
+      onStatus = () => {
+      }
+    }) {
+      Object.assign(this, {
+        scene,
+        camera,
+        canvas,
+        getState,
+        getMeshes,
+        getHabitat: getHabitat2,
+        onCommit,
+        onStatus
+      });
+      this.enabled = false;
+      this.ray = new Raycaster();
+      this.pointer = new Vector2();
+      this.moveHandler = (event) => this.pointerMove(event);
+      this.clickHandler = (event) => this.click(event);
+      this.keyHandler = (event) => {
+        if (!this.enabled) return;
+        if (event.key === "Escape") this.cancel();
+        if (this.selection && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
+          event.preventDefault();
+          this.rotate(event.key === "ArrowLeft" ? -15 : 15);
+        }
+      };
+      canvas.addEventListener("pointermove", this.moveHandler);
+      canvas.addEventListener("click", this.clickHandler);
+      globalThis.window?.addEventListener("keydown", this.keyHandler);
+    }
+    setEnabled(enabled) {
+      this.enabled = Boolean(enabled);
+      if (!enabled) this.cancel();
+      else
+        this.status(
+          "Select a purchased rock or coral, then click its new surface."
+        );
+    }
+    allMeshes() {
+      const meshes = this.getMeshes?.() || {};
+      const rocks = meshes.rockMeshes ? [...meshes.rockMeshes.values()] : this.getHabitat().rocks;
+      return { corals: [...meshes.coralMeshes?.values() || []], rocks };
+    }
+    begin(selection) {
+      this.cancel();
+      const state = this.getState();
+      const { corals, rocks } = this.allMeshes();
+      let mesh2, item;
+      if (selection.kind === "coral") {
+        if (!state.corals.some(
+          (coral) => coral.id === selection.livestockId
+        ))
+          return false;
+        mesh2 = corals.find(
+          (object) => object.userData.id === selection.livestockId
+        );
+        item = state.placedItems?.find(
+          (entry) => entry.kind === "coral" && entry.livestockId === selection.livestockId
+        );
+      } else if (selection.kind === "rock") {
+        item = state.placedItems?.find(
+          (entry) => entry.kind === "rock" && entry.id === selection.id
+        );
+        if (!item || !(state.equipment.liveRock > 0)) return false;
+        if (state.placedItems.some((entry) => entry.supportId === item.id)) {
+          this.status(
+            "Move attached corals or supported rocks before moving this rock."
+          );
+          return false;
+        }
+        mesh2 = rocks.find(
+          (object) => object.userData.placedItemId === item.id
+        );
+      }
+      if (!mesh2) return false;
+      this.enabled = true;
+      this.selection = {
+        ...selection,
+        id: item?.id || `coral-${selection.livestockId}`
+      };
+      this.original = mesh2;
+      this.rotation = snapRotation((item?.rotation || 0) * 180 / Math.PI);
+      this.previewMaterial = new MeshBasicMaterial({
+        color: 4384420,
+        transparent: true,
+        opacity: 0.45,
+        depthWrite: false
+      });
+      this.preview = mesh2.clone(true);
+      this.preview.visible = true;
+      this.preview.traverse((part) => {
+        if (part.isMesh) part.material = this.previewMaterial;
+      });
+      this.preview.userData.isPlacementPreview = true;
+      this.scene.add(this.preview);
+      const bounds = new Box3().setFromObject(mesh2);
+      this.radius = selection.kind === "coral" ? mesh2.userData.placementRadius : item.size / 2;
+      this.height = selection.kind === "coral" ? mesh2.userData.coralHeight * mesh2.scale.x : bounds.max.y - bounds.min.y;
+      this.baseOffset = selection.kind === "coral" ? mesh2.userData.coralBaseOffset * mesh2.scale.x - 1e-3 : 0;
+      this.status(
+        "Point at sand or a stable rock ledge. Rotate in 15\xB0 steps."
+      );
+      return true;
+    }
+    setRotation(degrees) {
+      if (!this.selection || !Number.isFinite(Number(degrees))) return;
+      this.rotation = (snapRotation(Number(degrees)) % 360 + 360) % 360;
+      if (this.pending)
+        this.setPreview(
+          this.pending.point,
+          this.pending.normal,
+          this.pending.supportId
+        );
+      else this.status("Point at a surface to preview placement.");
+    }
+    rotate(step = 15) {
+      this.setRotation(this.rotation + step);
+    }
+    rayFromEvent(event) {
+      const rect = this.canvas.getBoundingClientRect();
+      this.pointer.set(
+        (event.clientX - rect.left) / rect.width * 2 - 1,
+        -(event.clientY - rect.top) / rect.height * 2 + 1
+      );
+      this.ray.setFromCamera(this.pointer, this.camera);
+    }
+    pointerMove(event) {
+      if (!this.enabled || !this.selection) return;
+      this.rayFromEvent(event);
+      const habitat = this.getHabitat();
+      const surfaces = habitat.surfaces.filter(
+        (mesh2) => mesh2.userData.placedItemId !== this.selection.id
+      );
+      const hit = this.ray.intersectObjects(surfaces, true)[0];
+      if (hit) {
+        const normal = hit.face.normal.clone().applyMatrix3(
+          new Matrix3().getNormalMatrix(hit.object.matrixWorld)
+        ).normalize();
+        this.setPreview(
+          hit.point,
+          normal,
+          hit.object.userData.placedItemId ?? null
+        );
+      } else {
+        const point = this.ray.ray.intersectPlane(
+          new Plane(new Vector3(0, 1, 0), -habitat.floorY),
+          new Vector3()
+        );
+        if (point) this.setPreview(point, new Vector3(0, 1, 0), null);
+        else {
+          this.pending = null;
+          this.preview.visible = false;
+          this.status("Point at a solid aquarium surface.");
+        }
+      }
+    }
+    setPreview(point, normal, supportId = null) {
+      if (!this.selection) return;
+      const { corals, rocks } = this.allMeshes();
+      const occupied = [...corals, ...rocks].filter((mesh2) => mesh2.visible).map((mesh2) => {
+        const bounds = new Box3().setFromObject(mesh2);
+        const item = this.getState().placedItems?.find(
+          (entry) => entry.id === mesh2.userData.placedItemId
+        );
+        return {
+          id: mesh2.userData.placedItemId,
+          kind: mesh2.userData.isCoral ? "coral" : "rock",
+          x: mesh2.position.x,
+          z: mesh2.position.z,
+          radius: mesh2.userData.placementRadius || (item?.size || bounds.max.x - bounds.min.x) / 2,
+          minY: bounds.min.y,
+          maxY: bounds.max.y
+        };
+      });
+      const result = validatePlacement({
+        point,
+        normal,
+        radius: this.radius,
+        height: this.height,
+        spec: this.getHabitat().spec,
+        occupied,
+        selectedId: this.selection.id,
+        kind: this.selection.kind,
+        supportId
+      });
+      const contact = this.getHabitat().sample(point.x, point.z, {
+        excludeId: this.selection.kind === "rock" ? this.selection.id : void 0
+      });
+      if (Math.abs(contact.y - point.y) > 3e-3) {
+        result.valid = false;
+        result.reason = "Place the object directly on a solid surface.";
+      }
+      this.pending = {
+        point: { x: point.x, y: point.y, z: point.z },
+        normal: { x: normal.x, y: normal.y, z: normal.z },
+        supportId,
+        ...result
+      };
+      this.preview.visible = true;
+      applySurfaceTransform(
+        this.preview,
+        point,
+        normal,
+        this.rotation * Math.PI / 180,
+        this.baseOffset
+      );
+      this.previewMaterial.color.set(result.valid ? 4384420 : 16732780);
+      this.status(result.reason);
+      return result;
+    }
+    click(event) {
+      if (!this.enabled) return;
+      if (this.selection) {
+        this.pointerMove(event);
+        this.commit();
+        return;
+      }
+      this.rayFromEvent(event);
+      const { corals, rocks } = this.allMeshes();
+      const hit = this.ray.intersectObjects(
+        [...corals, ...rocks].filter((mesh3) => mesh3.visible),
+        true
+      )[0];
+      let mesh2 = hit?.object;
+      while (mesh2 && !mesh2.userData.isCoral && !mesh2.userData.placedItemId)
+        mesh2 = mesh2.parent;
+      if (!mesh2) return;
+      this.begin(
+        mesh2.userData.isCoral ? { kind: "coral", livestockId: mesh2.userData.id } : { kind: "rock", id: mesh2.userData.placedItemId }
+      );
+    }
+    commit() {
+      if (!this.selection || !this.pending?.valid) return false;
+      this.setPreview(
+        this.pending.point,
+        this.pending.normal,
+        this.pending.supportId
+      );
+      if (!this.pending.valid) return false;
+      const state = this.getState();
+      if (this.selection.kind === "coral" && !state.corals.some(
+        (coral) => coral.id === this.selection.livestockId
+      ))
+        return false;
+      state.placedItems ||= [];
+      let item = state.placedItems.find(
+        (entry) => entry.id === this.selection.id
+      );
+      if (this.selection.kind === "rock" && !item) return false;
+      if (!item) {
+        item = { ...this.selection };
+        state.placedItems.push(item);
+      }
+      Object.assign(item, {
+        position: { ...this.pending.point },
+        normal: { ...this.pending.normal },
+        rotation: this.rotation * Math.PI / 180,
+        size: this.radius * 2,
+        supportId: this.pending.supportId
+      });
+      if (item.kind === "coral") applyCoralPlacement(this.original, item);
+      else
+        applySurfaceTransform(
+          this.original,
+          item.position,
+          item.normal,
+          item.rotation
+        );
+      this.original.visible = true;
+      const committed = item;
+      this.cancel();
+      this.onCommit(committed);
+      this.status(
+        "Placement saved. Select another purchased object to move it."
+      );
+      return true;
+    }
+    status(reason) {
+      this.onStatus({
+        enabled: this.enabled,
+        active: Boolean(this.selection),
+        valid: Boolean(this.pending?.valid),
+        reason,
+        rotation: this.rotation || 0,
+        selection: this.selection || null
+      });
+    }
+    cancel() {
+      if (this.preview) this.scene.remove(this.preview);
+      this.previewMaterial?.dispose();
+      this.preview = this.previewMaterial = this.selection = this.original = this.pending = null;
+      this.status(
+        this.enabled ? "Select a purchased rock or coral to move." : "Placement editor closed."
+      );
+    }
+    dispose() {
+      this.cancel();
+      this.canvas.removeEventListener("pointermove", this.moveHandler);
+      this.canvas.removeEventListener("click", this.clickHandler);
+      globalThis.window?.removeEventListener("keydown", this.keyHandler);
     }
   };
 
@@ -34420,8 +35681,8 @@ varying vec3 vWorldPos;
 void main() {
     vUv = uv;
     vec3 p = position;
-    p.y += sin((p.x + uTime * 0.6) * 3.0) * 0.02;
-    p.y += cos((p.z + uTime * 0.4) * 4.0) * 0.015;
+    p.y += sin((p.x + uTime * 0.6) * 3.0) * 0.0015;
+    p.y += cos((p.z + uTime * 0.4) * 4.0) * 0.001;
     vec4 wp = modelMatrix * vec4(p, 1.0);
     vWorldPos = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
@@ -34518,9 +35779,23 @@ void main() {
       this.controls.maxPolarAngle = Math.PI / 2 + 0.1;
       this.controls.minDistance = 3;
       this.controls.maxDistance = 15;
-      const ambientLight = new AmbientLight(666186, 1.5);
+      const ambientLight = new AmbientLight(11979228, 1.1);
       this.scene.add(ambientLight);
-      this.pointLight = new PointLight(65505, 0, 10);
+      this.pointLight = new SpotLight(
+        16777215,
+        12,
+        5,
+        Math.PI / 3,
+        0.65,
+        2
+      );
+      this.pointLight.castShadow = true;
+      this.pointLight.shadow.mapSize.set(1024, 1024);
+      this.pointLight.shadow.bias = -1e-4;
+      this.pointLight.shadow.normalBias = 1e-3;
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = PCFSoftShadowMap;
+      this.renderer.physicallyCorrectLights = true;
       this.pointLight.position.set(0, 4, 0);
       this.scene.add(this.pointLight);
       const waterGeo = new PlaneGeometry(5.7, 2.7, 48, 24);
@@ -34570,7 +35845,7 @@ void main() {
         bubblePos[i * 3] = (Math.random() - 0.5) * 4.4;
         bubblePos[i * 3 + 1] = -1.15 + Math.random() * 2.3;
         bubblePos[i * 3 + 2] = (Math.random() - 0.5) * 2.1;
-        this._bubbleSpeeds[i] = 0.01 + Math.random() * 0.02;
+        this._bubbleSpeeds[i] = 0.01 + Math.random() * 15e-4;
       }
       const bubbleAttr = new BufferAttribute(bubblePos, 3);
       bubbleAttr.setUsage(DynamicDrawUsage);
@@ -34604,8 +35879,71 @@ void main() {
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(width, height);
     }
+    updatePhysicalTank(state) {
+      const spec = getTankSpec(state);
+      const signature = JSON.stringify(spec);
+      if (this._tankSignature === signature) return;
+      this.placement?.cancel();
+      this._tankSignature = signature;
+      this.tankSpec = spec;
+      const span = Math.max(spec.width, spec.height, spec.depth);
+      this.camera.near = 5e-3;
+      this.camera.far = span * 30;
+      this.camera.position.set(span * 0.12, spec.height * 0.65, span * 1.9);
+      this.camera.updateProjectionMatrix();
+      this.controls.target.set(0, -spec.height * 0.06, 0);
+      this.controls.minDistance = span * 0.45;
+      this.controls.maxDistance = span * 5;
+      this.pointLight.position.set(0, spec.height / 2 + span * 0.4, 0);
+      this.pointLight.distance = span * 5;
+      this.pointLight.shadow.camera.near = 0.01;
+      this.pointLight.shadow.camera.far = span * 5;
+      this.scene.fog.density = 0.06 / span;
+      this.waterMesh.geometry.dispose();
+      this.waterMesh.geometry = horizontalGeometry(spec);
+      this.waterMesh.position.y = waterLevel(spec);
+      this.lightShaft.scale.set(
+        spec.width / 5.8,
+        (spec.height - 0.025) / 2.8,
+        spec.depth / 5.8
+      );
+      this.lightShaft.position.set(0, -0.0125, 0);
+      this.bubbleParticles.material.size = 25e-4;
+      const positions = this.bubbleParticles.geometry.attributes.position.array;
+      for (let i = 0; i < positions.length; i += 3) {
+        const point = constrainPoint(
+          spec,
+          {
+            x: (Math.random() - 0.5) * spec.width,
+            y: (Math.random() - 0.5) * spec.height,
+            z: (Math.random() - 0.5) * spec.depth
+          },
+          0.015
+        );
+        positions.set([point.x, point.y, point.z], i);
+      }
+      this.bubbleParticles.geometry.attributes.position.needsUpdate = true;
+    }
     render(state) {
       if (!this.initialized) return;
+      if (this._state && this._state !== state) {
+        this.placement?.cancel();
+        for (const map of [
+          this.fishMeshes,
+          this.coralMeshes,
+          this.cleanupMeshes
+        ]) {
+          for (const mesh2 of map.values()) {
+            this.scene.remove(mesh2);
+            TankBuilder.disposeGroup(mesh2);
+          }
+          map.clear();
+        }
+        this._wildlifeTime = 0;
+        if (this.feedingParticles) this.feedingParticles.key = null;
+      }
+      this._state = state;
+      this.updatePhysicalTank(state);
       const now2 = performance.now();
       const delta = Math.min(
         (now2 - (this._lastFrameTime ?? now2 - 1e3 / 60)) / 1e3,
@@ -34620,6 +35958,17 @@ void main() {
       if (this.controls) this.controls.update();
       TankBuilder.buildEnvironment(this.scene, state);
       const habitat = getHabitat(this.scene, state);
+      if (!this.placement)
+        this.placement = new PlacementController({
+          scene: this.scene,
+          camera: this.camera,
+          canvas: this.renderer.domElement,
+          getState: () => this._state,
+          getMeshes: () => ({ coralMeshes: this.coralMeshes }),
+          getHabitat: () => getHabitat(this.scene, this._state),
+          onCommit: (item) => this.onPlacementCommit?.(item),
+          onStatus: (status) => this.onPlacementStatus?.(status)
+        });
       this._wildlifeContext = {
         habitat,
         state,
@@ -34631,7 +35980,10 @@ void main() {
       caustics.offset.set(now2 * 18e-6, now2 * 11e-6);
       const hasLight = state.equipment.lightOn && (state.equipment.lightBasic || state.equipment.lightReef);
       if (hasLight) {
-        this.pointLight.intensity = state.equipment.lightReef ? 2.5 : 1.5;
+        this.pointLight.intensity = (state.equipment.lightReef ? 12 : 6) * Math.max(
+          0.3,
+          this.tankSpec.width * this.tankSpec.depth / 0.4
+        );
         const colorHex = state.equipment.lightReef ? 7065599 : 16773839;
         this.pointLight.color.setHex(colorHex);
         this.shaftUniforms.uColor.value.setHex(colorHex);
@@ -34653,21 +36005,21 @@ void main() {
           this.waterUniforms.uColor.value.setHex(1002625);
         }
       }
-      const fishIds = new Set(state.livestock.map((fish) => fish.id));
-      state.livestock.forEach((fish) => {
-        let mesh = this.fishMeshes.get(fish.id);
-        if (!mesh) {
-          mesh = LivestockRenderer.createFishMesh(
-            fish,
+      const fishIds = new Set(state.livestock.map((fish2) => fish2.id));
+      state.livestock.forEach((fish2) => {
+        let mesh2 = this.fishMeshes.get(fish2.id);
+        if (!mesh2) {
+          mesh2 = LivestockRenderer.createFishMesh(
+            fish2,
             this._wildlifeContext,
             wildlifeTime
           );
-          this.scene.add(mesh);
-          this.fishMeshes.set(fish.id, mesh);
+          this.scene.add(mesh2);
+          this.fishMeshes.set(fish2.id, mesh2);
         }
         LivestockRenderer.updateFishAnimation(
-          mesh,
-          fish,
+          mesh2,
+          fish2,
           wildlifeTime,
           wildlifeDelta,
           this._wildlifeContext
@@ -34676,24 +36028,24 @@ void main() {
       for (let id of this.fishMeshes.keys()) {
         const fishExists = fishIds.has(id);
         if (!fishExists) {
-          const mesh = this.fishMeshes.get(id);
-          if (mesh) {
-            this.scene.remove(mesh);
-            TankBuilder.disposeGroup(mesh);
+          const mesh2 = this.fishMeshes.get(id);
+          if (mesh2) {
+            this.scene.remove(mesh2);
+            TankBuilder.disposeGroup(mesh2);
             this.fishMeshes.delete(id);
           }
         }
       }
       const coralIds = new Set(state.corals.map((coral) => coral.id));
       state.corals.forEach((coral) => {
-        let mesh = this.coralMeshes.get(coral.id);
-        if (!mesh) {
-          mesh = LivestockRenderer.createCoralMesh(coral);
-          this.scene.add(mesh);
-          this.coralMeshes.set(coral.id, mesh);
+        let mesh2 = this.coralMeshes.get(coral.id);
+        if (!mesh2) {
+          mesh2 = LivestockRenderer.createCoralMesh(coral);
+          this.scene.add(mesh2);
+          this.coralMeshes.set(coral.id, mesh2);
         }
         LivestockRenderer.updateCoralAnimation(
-          mesh,
+          mesh2,
           coral,
           wildlifeTime,
           wildlifeDelta
@@ -34702,10 +36054,10 @@ void main() {
       for (let id of this.coralMeshes.keys()) {
         const coralExists = coralIds.has(id);
         if (!coralExists) {
-          const mesh = this.coralMeshes.get(id);
-          if (mesh) {
-            this.scene.remove(mesh);
-            TankBuilder.disposeGroup(mesh);
+          const mesh2 = this.coralMeshes.get(id);
+          if (mesh2) {
+            this.scene.remove(mesh2);
+            TankBuilder.disposeGroup(mesh2);
             this.coralMeshes.delete(id);
           }
         }
@@ -34716,24 +36068,24 @@ void main() {
         for (let index = 0; index < crew.count; index++) {
           const id = `${crew.id}:${index}`;
           cleanupIds.add(id);
-          let mesh = this.cleanupMeshes.get(id);
+          let mesh2 = this.cleanupMeshes.get(id);
           const animal = {
             ...crew,
             id,
             cohortId: crew.id,
             instanceIndex: index,
-            alive: true
+            alive: crew.alive !== false && crew.health !== 0
           };
-          if (!mesh) {
-            mesh = LivestockRenderer.createCleanupMesh(
+          if (!mesh2) {
+            mesh2 = LivestockRenderer.createCleanupMesh(
               animal,
               this._wildlifeContext
             );
-            this.cleanupMeshes.set(id, mesh);
-            this.scene.add(mesh);
+            this.cleanupMeshes.set(id, mesh2);
+            this.scene.add(mesh2);
           }
           LivestockRenderer.updateCleanupAnimation(
-            mesh,
+            mesh2,
             animal,
             wildlifeTime,
             wildlifeDelta,
@@ -34741,10 +36093,10 @@ void main() {
           );
         }
       }
-      for (const [id, mesh] of this.cleanupMeshes) {
+      for (const [id, mesh2] of this.cleanupMeshes) {
         if (!cleanupIds.has(id)) {
-          this.scene.remove(mesh);
-          TankBuilder.disposeGroup(mesh);
+          this.scene.remove(mesh2);
+          TankBuilder.disposeGroup(mesh2);
           this.cleanupMeshes.delete(id);
         }
       }
@@ -34754,14 +36106,27 @@ void main() {
         const positions = this.bubbleParticles.geometry.attributes.position.array;
         const t = now2 * 5e-3;
         for (let i = 0, p = 0; i < positions.length; i += 3, p++) {
-          positions[i + 1] += this._bubbleSpeeds[p] * delta * 60;
-          positions[i] += Math.sin(t + p) * 6e-3 * delta * 60;
-          if (positions[i + 1] > 1.15) positions[i + 1] = -1.15;
+          positions[i + 1] += this._bubbleSpeeds[p] * delta * 3;
+          const point = constrainPoint(
+            this.tankSpec,
+            {
+              x: positions[i] + Math.sin(t + p) * 1e-3 * delta,
+              y: positions[i + 1],
+              z: positions[i + 2]
+            },
+            5e-3
+          );
+          positions[i] = point.x;
+          positions[i + 2] = point.z;
+          if (positions[i + 1] > waterLevel(this.tankSpec))
+            positions[i + 1] = -this.tankSpec.height / 2 + 0.02;
         }
         this.bubbleParticles.geometry.attributes.position.needsUpdate = true;
       } else {
         this.bubbleParticles.visible = false;
       }
+      this.feedingParticles ||= new FeedingParticles(this.scene);
+      this.feedingParticles.update(state, wildlifeDelta);
       this.renderer.render(this.scene, this.camera);
     }
   };
@@ -34842,6 +36207,10 @@ void main() {
       }
       const maintPanel = document.getElementById("maintenancePanel");
       if (maintPanel) {
+        maintPanel.addEventListener("change", (e) => {
+          if (e.target.id === "foodType")
+            callbacks.onFoodType?.(e.target.value);
+        });
         maintPanel.addEventListener("click", (e) => {
           const btn = e.target.closest(".maint-btn");
           if (!btn) return;
@@ -34870,6 +36239,19 @@ void main() {
       const livestockTab = document.getElementById("tab-livestock");
       if (livestockTab) {
         livestockTab.addEventListener("click", (e) => {
+          const remove = e.target.closest("[data-remove-kind]");
+          if (remove) {
+            callbacks.onRemoveDead?.(
+              remove.dataset.removeKind,
+              remove.dataset.id
+            );
+            return;
+          }
+          const place = e.target.closest("[data-place-coral]");
+          if (place) {
+            callbacks.onPlaceCoral?.(Number(place.dataset.placeCoral));
+            return;
+          }
           const crewItem = e.target.closest(
             '[data-action="buy-cleanup"]'
           );
@@ -34946,7 +36328,7 @@ void main() {
       const pNitri = getStatus(w.nitrite, 0, 0, 0.25, Number.MAX_VALUE);
       const pNitra = getStatus(w.nitrate, 0, 20, 0, 50);
       const pAlk = getStatus(w.alkalinity, 8, 12, 7, 13);
-      const formatRow = (label, key, val, unit, status, min, max, tooltip) => {
+      const formatRow = (label2, key, val, unit, status, min, max, tooltip) => {
         const trend = SparklineManager.getTrend(key);
         const colorMap = {
           good: "#39ff14",
@@ -34961,7 +36343,7 @@ void main() {
         return `
             <div class="param-row">
                 <div class="param-label tooltip-trigger">
-                    ${label}
+                    ${label2}
                     <div class="tooltip-text">${tooltip}</div>
                 </div>
                 <div class="param-value-container">
@@ -35014,14 +36396,14 @@ void main() {
     }
     static renderEquipment(state, _callbacks) {
       let html = "";
-      const addToggle = (id, label, icon, stateKey) => {
+      const addToggle = (id, label2, icon, stateKey) => {
         if (!state.equipment[id]) {
           html += `
                     <div class="equipment-item">
                         <div style="display:flex; align-items:center; gap:12px;">
                             <div class="equip-icon" style="opacity:0.2">${icon}</div>
                             <div>
-                                <div class="equip-name" style="color:var(--text-secondary)">${label}</div>
+                                <div class="equip-name" style="color:var(--text-secondary)">${label2}</div>
                                 <div class="equip-status">Not Installed</div>
                             </div>
                         </div>
@@ -35034,7 +36416,7 @@ void main() {
                     <div style="display:flex; align-items:center; gap:12px;">
                         <div class="equip-icon" style="${isOn ? "background:rgba(0,255,225,0.2); border-color:var(--accent-cyan); box-shadow:0 0 10px rgba(0,255,225,0.3);" : ""}">${icon}</div>
                         <div>
-                            <div class="equip-name" style="${isOn ? "color:var(--accent-cyan); text-shadow:0 0 5px var(--accent-cyan)" : ""}">${label}</div>
+                            <div class="equip-name" style="${isOn ? "color:var(--accent-cyan); text-shadow:0 0 5px var(--accent-cyan)" : ""}">${label2}</div>
                             <div class="equip-status" style="${isOn ? "color:var(--success)" : ""}">${isOn ? "Running Online" : "Powered Off"}</div>
                         </div>
                     </div>
@@ -35095,6 +36477,8 @@ void main() {
                 \u{1F4A7} Top Off (RO/DI)
                 <span class="maint-cooldown">Salinity: ${state.water.salinity.toFixed(1)} ppt</span>
             </button>
+            <label for="foodType">Food type</label>
+            <select id="foodType" aria-label="Food type">${["mixed", "algae", "meaty", "plankton", "copepods"].map((food) => `<option value="${food}" ${state.foodType === food ? "selected" : ""}>${food}</option>`).join("")}</select>
             <button class="maint-btn" id="btnFeedFish">
                 \u{1F37D} Feed Livestock
                 <span class="maint-cooldown">Today: ${state.feedingsToday}\xD7 ${state.lastFed === state.day ? "\u2705" : ""}</span>
@@ -35141,31 +36525,37 @@ void main() {
       this.updateHTML("tab-store", html);
     }
     static renderLivestock(state, _callbacks) {
-      const livesSig = state.livestock.length + "|" + state.corals.length + "|" + state.livestock.map((f) => f.id + ":" + f.alive).join(",") + "|" + state.corals.map((c) => c.id + ":" + Math.round(c.health)).join(",") + "|" + state.livestock.map((f) => Math.round(f.health)).join(",") + "|" + (state.cleanupCrew || []).map((c) => c.id + ":" + c.count).join(",");
+      const livesSig = state.livestock.length + "|" + state.corals.length + "|" + state.livestock.map((f) => f.id + ":" + f.alive).join(",") + "|" + state.corals.map(
+        (c) => c.id + ":" + Math.round(c.health) + ":" + (c.diameterM || 0).toFixed(3) + ":" + c.placementStatus
+      ).join(",") + "|" + state.livestock.map(
+        (f) => Math.round(f.health) + ":" + (f.lengthM || 0).toFixed(3)
+      ).join(",") + "|" + (state.cleanupCrew || []).map((c) => c.id + ":" + c.count + ":" + c.alive).join(",");
       if (livesSig === this._lastLivestockSig) return;
       this._lastLivestockSig = livesSig;
       let html = '<p class="store-item-desc">Observe where each animal swims, rests and feeds. Plan shelter, swimming room, diet and coral spacing before stocking. These animated behaviors illustrate habitat use; disease, aggression, food populations and coral stinging are not fully simulated.</p><div class="store-category">\u{1F420} Fish Store</div>';
-      FISH_DATABASE.forEach((fish) => {
+      FISH_DATABASE.forEach((fish2) => {
         html += `
-            <div class="store-item" data-action="buy-fish" data-id="${fish.id}">
+            <div class="store-item" data-action="buy-fish" data-id="${fish2.id}">
                 <div class="store-item-top">
-                    <div class="store-item-name">${fish.icon} ${fish.name}</div>
-                    <div class="store-item-price">$${fish.price}</div>
+                    <div class="store-item-name">${fish2.icon} ${fish2.name}</div>
+                    <div class="store-item-price">$${fish2.price}</div>
                 </div>
-                <div class="store-item-desc">${fish.desc}</div>
-                <div class="store-item-desc"><strong>Care:</strong> ${fish.care}</div>
+                <div class="store-item-desc">${fish2.desc}</div>
+                <div class="store-item-desc"><strong>Care:</strong> ${fish2.care}</div>
             </div>`;
       });
       if (state.livestock.length > 0) {
         html += '<div class="store-category">\u{1F41F} Your Tank Fish</div>';
-        state.livestock.forEach((fish) => {
-          const color = fish.health > 70 ? "var(--success)" : fish.health > 40 ? "var(--warning)" : "var(--danger)";
+        state.livestock.forEach((fish2) => {
+          const color = fish2.health > 70 ? "var(--success)" : fish2.health > 40 ? "var(--warning)" : "var(--danger)";
           html += `
                 <div class="livestock-item">
                     <div class="livestock-header">
-                        <span class="livestock-name">${fish.icon} ${fish.name}</span>
-                        <span class="livestock-health" style="color:${color}">${Math.round(fish.health)}%</span>
+                        <span class="livestock-name">${fish2.icon} ${fish2.name}</span>
+                        <span class="livestock-health" style="color:${color}">${Math.round(fish2.health)}%</span>
                     </div>
+                    <div class="store-item-desc">${((fish2.lengthM || getSpecies(fish2.templateId).juvenileLengthM) * 100).toFixed(1)} cm \xB7 ${fish2.growthProgress >= 0.95 ? "Adult" : "Growing"} \xB7 Diet: ${getSpecies(fish2.templateId).diet}</div>
+                    ${fish2.alive === false ? `<button data-remove-kind="fish" data-id="${fish2.id}">Remove remains</button>` : ""}
                 </div>`;
         });
       }
@@ -35191,18 +36581,26 @@ void main() {
                         <span class="livestock-name">${coral.icon} ${coral.name}</span>
                         <span class="livestock-health" style="color:${color}">${Math.round(coral.health)}%</span>
                     </div>
+                    <div class="store-item-desc">${((coral.diameterM || getSpecies(coral.templateId).juvenileLengthM) * 100).toFixed(1)} cm colony \xB7 ${coral.growthProgress >= 0.95 ? "Mature" : "Growing"}${coral.placementStatus === "needs-placement" ? " \xB7 Needs space: use Place / move frag" : ""}</div>
+                    ${coral.alive === false || coral.health <= 0 ? `<button data-remove-kind="coral" data-id="${coral.id}">Remove remains</button>` : `<button data-place-coral="${coral.id}">Place / move frag</button>`}
                 </div>`;
         });
       }
       html += '<div class="store-category">\u{1F990} Cleanup Crew</div>';
       for (const crew of CLEANUP_DATABASE) {
-        const owned = (state.cleanupCrew || []).find((c) => c.templateId === crew.id)?.count || 0;
+        const owned = (state.cleanupCrew || []).filter(
+          (c) => c.templateId === crew.id && c.alive !== false && c.health !== 0
+        ).reduce((count, c) => count + c.count, 0);
         html += `<div class="store-item" data-action="buy-cleanup" data-id="${crew.id}">
                 <div class="store-item-top"><div class="store-item-name">${crew.icon} ${crew.name}</div>
                 <div class="store-item-price">$${crew.price}</div></div>
                 <div class="store-item-desc">${crew.desc}</div>
                 <div class="store-item-desc"><strong>Care:</strong> ${crew.care}</div>
                 <div class="store-item-desc">Pack: ${crew.count} \xB7 In tank: ${owned}</div></div>`;
+      }
+      for (const crew of state.cleanupCrew || []) {
+        if (crew.alive === false || crew.health <= 0)
+          html += `<div class="livestock-item">${crew.name}: remains <button data-remove-kind="cleanup" data-id="${crew.id}">Remove remains</button></div>`;
       }
       this.updateHTML("tab-livestock", html);
     }
@@ -35251,7 +36649,11 @@ void main() {
             <div class="hud-badge">${state.cycleComplete ? "Cycled \u2713" : "Cycling..."}</div>
             ${state.livestock.length > 0 ? `<div class="hud-badge">\u{1F420} ${state.livestock.length}</div>` : ""}
         `;
-      this.updateHTML("tankHud", html);
+      const tank = getTankSpec(state);
+      this.updateHTML(
+        "tankHud",
+        html + `<div class="hud-badge">${tank.shape} \xB7 ${Math.round(tank.width * 100)} \xD7 ${Math.round(tank.depth * 100)} \xD7 ${Math.round(tank.height * 100)} cm \xB7 ${tankVolumeLiters(tank).toFixed(0)} L</div>`
+      );
     }
     static renderPhase(state) {
       const phases = [
@@ -35345,6 +36747,7 @@ void main() {
       }
       this.renderer.init();
       this.registerGlobalHandlers();
+      setupAquariumControls(this);
       this.startLoop();
       this._startRenderLoop();
       this._autosaveTimer = setInterval(() => {
@@ -35392,8 +36795,10 @@ void main() {
       }
       WaterChemistry.tick(this.state, 0.25);
       LivestockEngine.tick(this.state, 0.25);
+      tickHusbandry(this.state, 0.25);
     }
     render(forceUI = true) {
+      this.updateAquascapeControls?.();
       if (forceUI || this._uiDirty) {
         this._uiDirty = false;
         UIController.renderAll(this.state, {
@@ -35403,6 +36808,23 @@ void main() {
           onTopOff: () => this.doTopOff(),
           onFeedFish: () => this.feedFish(),
           onGhostFeed: () => this.ghostFeed(),
+          onFoodType: (food) => {
+            this.state.foodType = food;
+            this.save();
+          },
+          onRemoveDead: (kind, id) => {
+            if (removeDeadLivestock(this.state, kind, id)) {
+              this.save();
+              this.render();
+            }
+          },
+          onPlaceCoral: (id) => {
+            this.renderer.placement?.setEnabled(true);
+            this.renderer.placement?.begin({
+              kind: "coral",
+              livestockId: id
+            });
+          },
           onBuyEquipment: (id) => this.buyEquipment(id),
           onBuyFish: (id) => this.buyFish(id),
           onBuyCoral: (id) => this.buyCoral(id),
@@ -35493,7 +36915,11 @@ void main() {
       }
       this.state.budget -= check.template.price;
       this.state.totalSpent += check.template.price;
-      LivestockEngine.addFish(this.state, fishId);
+      initializeAnimal(
+        LivestockEngine.addFish(this.state, fishId),
+        "fish",
+        this.state
+      );
       if (this.state.phase < 3) {
         this.state.phase = 3;
       }
@@ -35521,7 +36947,11 @@ void main() {
       }
       this.state.budget -= check.template.price;
       this.state.totalSpent += check.template.price;
-      LivestockEngine.addCoral(this.state, coralId);
+      initializeAnimal(
+        LivestockEngine.addCoral(this.state, coralId),
+        "coral",
+        this.state
+      );
       if (this.state.phase < 3) {
         this.state.phase = 3;
       }
@@ -35543,7 +36973,11 @@ void main() {
         UIController.showToast(check.reason, "warning");
         return;
       }
-      LivestockEngine.addCleanup(this.state, id);
+      initializeAnimal(
+        LivestockEngine.addCleanup(this.state, id),
+        "cleanup",
+        this.state
+      );
       this.state.budget -= check.template.price;
       this.state.totalSpent += check.template.price;
       this.state.journal.push({
@@ -35644,7 +37078,7 @@ void main() {
       this.render();
     }
     feedFish() {
-      const hasFish = this.state.livestock.some((fish) => fish.alive);
+      const hasFish = this.state.livestock.some((fish2) => fish2.alive);
       const hasCleanup = this.state.cleanupCrew.some(
         (crew) => crew.count > 0
       );
@@ -35667,6 +37101,7 @@ void main() {
         this.render();
         return;
       }
+      feedLivestock(this.state, this.state.foodType || "mixed");
       this.state.feedingsToday += 1;
       this.state.lastFed = this.state.day;
       if (this.state.feedingsToday > 3) {
@@ -35683,9 +37118,6 @@ void main() {
         );
         this.readKnowledge("feeding");
       } else {
-        this.state.livestock.forEach((f) => {
-          if (f.alive) f.health = Math.min(100, f.health + 0.5);
-        });
         this.state.journal.push({
           time: `Day ${this.state.day} ${this.state.hour}:00`,
           text: `\u{1F37D} Fed the livestock.`,

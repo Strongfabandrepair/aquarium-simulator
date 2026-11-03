@@ -28,7 +28,7 @@ Corals are stationary colonies. Soft tissue sways while the mounting base remain
 
 Read the species care text shown in the Livestock store before stocking. Match diet, shelter, swimming room, light and flow to the animal. Observe feeding and behavior instead of assuming a purchase or a green status means every need is satisfied.
 
-Automatic display placement is not a lighting, PAR, flow or stocking-density calculation. All tank sizes share a display coordinate system, and display colonies scale down to fit their tank's visual capacity. Actual coral growth, shading, sweeper reach and aggression require additional space and observation. The app does not yet simulate disease transmission, quarantine outcomes, a living copepod food web, reproduction, every territorial interaction or full invertebrate health. Its numerical cycle completion is a gameplay rule, not a real-tank elapsed-day guarantee.
+Automatic or manual placement is not a lighting, PAR, flow or stocking-density calculation. Tanks now use meter dimensions and shared shape-aware boundaries. Colonies retain physical size; crowded colonies need manual relocation rather than shrinking. See [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) for the current editor, growth and mortality model. Actual coral growth, shading, sweeper reach and aggression require additional space and observation. The app does not yet simulate disease transmission, quarantine outcomes, a living copepod food web, reproduction, every territorial interaction or individual-level invertebrate health (cleanup health is modeled per cohort). Its numerical cycle completion is a gameplay rule, not a real-tank elapsed-day guarantee.
 
 ## Implementation and verification
 

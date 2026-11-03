@@ -1,4 +1,19 @@
 import * as THREE from 'three';
+import { containsPoint, waterLevel } from '../model/TankGeometry.js';
+import { applySurfaceTransform } from './PlacementRules.js';
+import { physicalSize } from '../model/SpeciesCatalog.js';
+
+export function applyCoralPlacement(mesh, item) {
+    const offset = mesh.userData.coralBaseOffset * mesh.scale.x - 0.001;
+    applySurfaceTransform(
+        mesh,
+        item.position,
+        item.normal || { x: 0, y: 1, z: 0 },
+        item.rotation || 0,
+        offset
+    );
+    mesh.userData.placedItemId = item.id;
+}
 
 const SPS = new Set(['acropora', 'birdsnest', 'montipora']);
 const LPS = new Set(['hammerCoral', 'torchCoral', 'frogspawn']);
@@ -28,95 +43,109 @@ function placementScore(point, coral, index) {
     );
 }
 
-export function syncCoralPlacements(corals, meshes, habitat) {
-    const signature = corals
-        .map((coral) => `${coral.id}:${coral.templateId}:${coral.scale}`)
-        .join('|');
+export function syncCoralPlacements(
+    corals,
+    meshes,
+    habitat,
+    state = habitat.state
+) {
+    state.placedItems ||= [];
+    const signature = JSON.stringify([
+        corals.map((coral) => [
+            coral.id,
+            coral.templateId,
+            physicalSize(coral, 'coral')
+        ]),
+        state.placedItems.filter((item) => item.kind === 'coral')
+    ]);
     if (habitat.coralSignature === signature && habitat.coralMeshes === meshes)
         return;
-    habitat.coralSignature = signature;
     habitat.coralMeshes = meshes;
     const occupied = [];
     for (let index = 0; index < corals.length; index++) {
         const coral = corals[index];
         const mesh = meshes.get(coral.id);
         if (!mesh) continue;
-        const requestedScale = Number.isFinite(coral.scale)
-            ? Math.max(0.4, Math.min(1.6, coral.scale))
-            : 1;
-        mesh.scale.setScalar(requestedScale * habitat.coralScale);
-        const radius = mesh.userData.coralRadius * mesh.scale.x;
-        const gap = LPS.has(coral.templateId)
-            ? 0.12
-            : SPREADING.has(coral.templateId)
-              ? 0.1
-              : 0.055;
-        const candidates = habitat.candidates.filter(
-            (p) =>
-                p.normal.y > 0.82 &&
-                Math.abs(p.x) + radius < 2.88 &&
-                Math.abs(p.z) + radius < 1.38 &&
-                occupied.every(
-                    (other) =>
-                        Math.hypot(p.x - other.x, p.z - other.z) >=
-                        radius + other.radius + Math.max(gap, other.gap)
-                )
-        );
-        candidates.sort(
-            (a, b) =>
-                placementScore(b, coral, index) -
-                placementScore(a, coral, index)
-        );
-        // Crowded legacy tanks retain every colony. Use the roomiest remaining
-        // supported spot and reduce that display model to fit the available gap.
-        let point = candidates[0];
-        if (!point) {
-            const ranked = habitat.candidates
-                .map((p) => ({
-                    p,
-                    clearance: Math.min(
-                        2.88 - Math.abs(p.x),
-                        1.38 - Math.abs(p.z),
-                        ...occupied.map(
-                            (other) =>
-                                Math.hypot(p.x - other.x, p.z - other.z) -
-                                other.radius -
-                                Math.max(gap, other.gap)
-                        )
-                    )
-                }))
-                .filter(
-                    ({ p }) =>
-                        p.normal.y > 0.82 &&
-                        Math.abs(p.x) < 2.55 &&
-                        Math.abs(p.z) < 1.1
-                )
-                .sort((a, b) => b.clearance - a.clearance);
-            point = ranked[0]?.p || habitat.sample(0, 0);
-            const fit = Math.max(
-                0.015,
-                (ranked[0]?.clearance || radius) - 0.015
+        const diameter = physicalSize(coral, 'coral');
+        mesh.userData.physicalDiameterM = diameter;
+        mesh.scale.setScalar(diameter / (2 * mesh.userData.coralRadius));
+        mesh.userData.placementRadius = diameter / 2;
+        const gap = 0.012;
+        const valid = (p) =>
+            p.normal.y > 0.7 &&
+            containsPoint(habitat.spec, p.x, p.z, diameter / 2 + 0.005) &&
+            p.y + mesh.userData.coralHeight * mesh.scale.x <
+                waterLevel(habitat.spec) - 0.005 &&
+            occupied.every(
+                (other) =>
+                    Math.hypot(p.x - other.x, p.z - other.z) >=
+                    diameter / 2 + other.radius + gap
             );
-            mesh.scale.multiplyScalar(Math.min(1, fit / radius));
-        }
-        // The model's mounting rock intersects the actual surface slightly; no
-        // guessed height or hovering gap. Polyps remain upright on a stable ledge.
-        mesh.position.set(
-            point.x,
-            point.y + mesh.userData.coralBaseOffset * mesh.scale.x - 0.012,
-            point.z
+        let item = state.placedItems.find(
+            (entry) => entry.kind === 'coral' && entry.livestockId === coral.id
         );
+        let point = item
+            ? habitat.sample(item.position.x, item.position.z)
+            : null;
+        if (point && !valid(point)) {
+            // A chosen placement is user intent. Growth or a changed aquascape
+            // can require more space, but must never silently relocate the colony.
+            mesh.visible = false;
+            coral.placementStatus = 'needs-placement';
+            continue;
+        }
+        if (!point) {
+            const candidates = habitat.candidates.filter(valid);
+            candidates.sort(
+                (a, b) =>
+                    placementScore(b, coral, index) -
+                    placementScore(a, coral, index)
+            );
+            point = candidates[0];
+        }
+        if (!point) {
+            // Keep purchased colonies in the placement tray, never shrink or stack them.
+            mesh.visible = false;
+            coral.placementStatus = 'needs-placement';
+            continue;
+        }
+        if (!item) {
+            item = {
+                id: 'coral-' + coral.id,
+                kind: 'coral',
+                livestockId: coral.id,
+                rotation: 0,
+                size: diameter
+            };
+            state.placedItems.push(item);
+        }
+        item.position = { x: point.x, y: point.y, z: point.z };
+        item.normal = {
+            x: point.normal.x,
+            y: point.normal.y,
+            z: point.normal.z
+        };
+        item.supportId = point.surfaceId;
+        item.size = diameter;
+        applyCoralPlacement(mesh, item);
+        mesh.visible = true;
         mesh.userData.habitat = point.type;
         mesh.userData.surfaceY = point.y;
-        mesh.userData.placementRadius =
-            mesh.userData.coralRadius * mesh.scale.x;
-        occupied.push({ ...point, radius: mesh.userData.placementRadius, gap });
-        // Save the resolved contact point, repairing old floating coordinates.
+        occupied.push({ ...point, radius: diameter / 2 });
         coral.x = mesh.position.x;
         coral.y = mesh.position.y;
         coral.z = mesh.position.z;
         coral.habitat = point.type;
+        coral.placementStatus = 'placed';
     }
+    habitat.coralSignature = JSON.stringify([
+        corals.map((coral) => [
+            coral.id,
+            coral.templateId,
+            physicalSize(coral, 'coral')
+        ]),
+        state.placedItems.filter((item) => item.kind === 'coral')
+    ]);
 }
 
 export function measureCoralMount(mesh) {
@@ -138,6 +167,8 @@ export function measureCoralMount(mesh) {
         }
     });
     mesh.userData.coralRadius = radius + 0.025;
+    const bounds = new THREE.Box3().setFromObject(mesh);
+    mesh.userData.coralHeight = bounds.max.y - bounds.min.y;
     const base = new THREE.Box3().setFromObject(mesh.children[0] || mesh);
     mesh.userData.coralBaseOffset = -base.min.y;
     mesh.position.copy(originalPosition);

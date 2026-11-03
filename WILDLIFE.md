@@ -1,6 +1,6 @@
 # Wildlife rendering
 
-The catalog has dedicated models for all 26 entries: ten fish, ten coral types, and six cleanup animals. These are procedural, stylized anatomical models intended for real-time aquarium viewing, not scanned specimens.
+The catalog now has models for 33 entries: 13 fish, 12 coral types, and eight cleanup animals. See [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) for meter sizing, growth and the interactive editor. These are procedural, stylized anatomical models intended for real-time aquarium viewing, not scanned specimens.
 
 ## Fish
 

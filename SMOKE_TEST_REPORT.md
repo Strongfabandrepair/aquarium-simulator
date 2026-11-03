@@ -1,3 +1,15 @@
+November 3, 2026: [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) documents the current meter-scale tank generator, raycast aquascape editor, 33-species catalog, feeding/growth/mortality systems and verification. Earlier entries below describe previous versions.
+
+## Physical simulation upgrade — November 3, 2026
+
+Production build and ESLint passed. All **105 unit tests across 15 files** and **30 Chromium browser scenarios** passed. The final browser report records no failed tests.
+
+Coverage includes rectangular, cube, cylinder and bow-front creation and reload; meter-scale water outlines and livestock; all 33 species factories; continuous swimming, schooling and cleaner separation; raycast coral movement, rotation snapping and persistence; feeding and dead-animal removal; growth and old-save migration; nitrogen-cycle recovery; profiles, maintenance, purchases, quizzes, autosave, reset and mobile layout. Placement unit tests additionally cover rock edits, surface normals, overlap rejection, cancellation and growth requiring more space.
+
+Fixed legacy assertions to use physical distances and procedural water geometry. Regression tests also protect against static-environment rebuilds during coral growth, new livestock inheriting an old tank's starvation age, malformed saved position vectors and replacement cleaners reviving dead cohorts. Corrected the LED fixture shadow that obscured most of the tank. Reviewed rendered tank and species-gallery screenshots.
+
+These checks validate the exercised Chromium flows and deterministic simulation rules. Growth timing, cleanup cohort health and food offerings are simplified training models; see the physical-simulation guide for limits. Detailed coral geometry can still be expensive at high population counts.
+
 # Full app smoke test — November 2, 2026
 
 ## Scope

@@ -4,6 +4,8 @@ const mergeBufferGeometries =
     BufferGeometryUtils.mergeBufferGeometries.bind(BufferGeometryUtils);
 
 const IDS = new Set([
+    'trochusSnail',
+    'cerithSnail',
     'hermitCrab',
     'turboSnail',
     'nassariusSnail',
@@ -135,7 +137,7 @@ export function createInvertebrateModel(animal, id = animal.templateId) {
     const black = mat(0x101923),
         white = mat(0xfff0dc);
     if (id.includes('Snail')) {
-        const nassarius = id === 'nassariusSnail';
+        const nassarius = id === 'nassariusSnail' || id === 'cerithSnail';
         const flesh = mat(nassarius ? 0xc6b49a : 0x778d73);
         const foot = sphere(
             root,
@@ -154,7 +156,14 @@ export function createInvertebrateModel(animal, id = animal.templateId) {
         );
         mantle.userData.anatomicalPart = 'mantle';
         root.userData.mantle = mantle;
-        shell(root, nassarius);
+        const snailShell = shell(root, nassarius);
+        if (id === 'trochusSnail') {
+            snailShell.scale.set(0.8, 1.5, 0.8);
+        }
+        if (id === 'cerithSnail') {
+            snailShell.scale.set(0.7, 1.55, 0.7);
+            snailShell.rotation.z = 0.2;
+        }
         sphere(root, flesh, [0.17, 0.065, 0], [0.07, 0.045, 0.065]);
         for (const side of [-1, 1]) {
             const antenna = new THREE.Group();

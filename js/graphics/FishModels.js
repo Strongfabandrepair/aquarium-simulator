@@ -3,6 +3,33 @@ import { fishTexture } from './FishTextures.js';
 
 // Body dimensions exclude the caudal fin. Shapes are deliberately species-specific.
 export const FISH_PROFILES = {
+    lyretailAnthias: {
+        length: 0.61,
+        height: 0.115,
+        width: 0.052,
+        color: 0xed7d4c,
+        fin: 0xcc4676,
+        tail: 'lyre',
+        frequency: 2.8
+    },
+    greenChromis: {
+        length: 0.48,
+        height: 0.12,
+        width: 0.052,
+        color: 0x4bc3bc,
+        fin: 0x5db5ae,
+        tail: 'fork',
+        frequency: 2.8
+    },
+    yellowWatchmanGoby: {
+        length: 0.6,
+        height: 0.08,
+        width: 0.065,
+        color: 0xf2cc22,
+        fin: 0xe3ba34,
+        tail: 'round',
+        frequency: 2.0
+    },
     clownfish: {
         length: 0.53,
         height: 0.135,

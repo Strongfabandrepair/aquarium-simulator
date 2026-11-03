@@ -41,7 +41,7 @@ test('reef renders, resizes, frees removed meshes, and opens quizzes', async ({
         };
     });
     expect(scene.fish).toBeGreaterThan(0);
-    expect(scene.surface).toBe('PlaneGeometry');
+    expect(scene.surface).toBe('ShapeGeometry');
     expect(scene.triangles).toBeGreaterThan(0);
     expect(scene.pixelRatio).toBeLessThanOrEqual(2);
     await page.screenshot({
