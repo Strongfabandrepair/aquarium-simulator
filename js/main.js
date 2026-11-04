@@ -160,7 +160,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                   Object.entries(engine.state.water)
                       .map(
                           ([key, value]) =>
-                              `<p><strong>${PARAM_LABELS[key] || key}</strong>: ${Number(value).toFixed(2)} ${WATER_IDEAL[key]?.unit || ''}</p>`
+                              `<p><strong>${escapeHTML(PARAM_LABELS[key] || key)}</strong>: ${Number(value).toFixed(2)} ${WATER_IDEAL[key]?.unit || ''}</p>`
                       )
                       .join('')
                 : '<p>Purchase a Test Kit from the equipment store to measure your water.</p>';

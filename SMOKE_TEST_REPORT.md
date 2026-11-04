@@ -1,4 +1,14 @@
-November 3, 2026: [PERSISTENCE_AND_SETUP.md](PERSISTENCE_AND_SETUP.md) documents SQLite profiles, per-item sizing and the global OmniRoute migration. Earlier entries below describe previous versions.
+November 4, 2026: [Security policy](SECURITY.md) and the [documentation index](docs/README.md) describe the current release. Earlier entries below describe previous versions.
+
+## Security remediation and documentation — November 4, 2026
+
+The final frozen source passed **126 unit tests across 20 files, one real-server API/restart scenario, all 36 Chromium scenarios, build and lint**. The browser report has zero failures, skipped cases or flaky cases. A fresh full `npm run audit` including development dependencies reports **zero known vulnerabilities**, down from 11 (4 high, 7 moderate).
+
+Compatible patch updates repaired Vitest/mocker, Vite, source-map-js and brace-expansion advisories. ESLint moved to 10.14.0 with explicit @eslint/js 10.0.1 and a targeted minimatch override at ^11.0.1 (resolved 11.0.4). This avoids npm's suggested breaking downgrade to ESLint 4. The modern minimatch API is exercised by the passing application lint run. Keep the override until upstream ESLint/config-array dependency ranges accept a patched version, then reassess it. Vitest is 4.1.12 and Vite resolves to 8.3.5.
+
+Source review fixed stored HTML injection through journal/livestock fields, bounded saved numeric style values, and removed dangerous prototype keys before merging legacy saves. The API rejects dangerous keys and excessive nesting, checks cross-site request metadata, and emits framing protections. Regression cases include malicious persisted markup, isolated browser identities, restart durability, stale revisions, invalid payloads and private-file access.
+
+A read-only GitHub Actions workflow runs dependency audit and the complete quality suite on pushes, pull requests, manual dispatch and weekly schedules. Official checkout/setup-node actions are pinned to immutable v6 commit hashes. Local validation is complete; the newly added hosted workflow is not claimed to have run before this push. Zero registry advisories is a point-in-time result, not proof that all possible source or platform vulnerabilities are eliminated. See SECURITY.md for the local-only deployment boundary and remaining limitations.
 
 ## Durable profiles and sizing — November 3, 2026
 

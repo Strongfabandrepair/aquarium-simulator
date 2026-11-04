@@ -35,11 +35,26 @@ const mime = {
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon'
 };
+function safeTree(value) {
+    const stack = [[value, 0]];
+    while (stack.length) {
+        const [item, depth] = stack.pop();
+        if (depth > 64) return false;
+        if (!item || typeof item !== 'object') continue;
+        for (const [key, child] of Object.entries(item)) {
+            if (['__proto__', 'constructor', 'prototype'].includes(key))
+                return false;
+            stack.push([child, depth + 1]);
+        }
+    }
+    return true;
+}
 function valid(value) {
     return (
         value &&
         typeof value === 'object' &&
         !Array.isArray(value) &&
+        safeTree(value) &&
         Number.isSafeInteger(value.revision) &&
         value.revision >= 0 &&
         typeof value.active === 'string' &&
@@ -60,7 +75,16 @@ function valid(value) {
     );
 }
 const server = http.createServer(async (req, res) => {
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader(
+        'Content-Security-Policy',
+        "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+    );
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     try {
+        if (req.headers['sec-fetch-site'] === 'cross-site')
+            return json(res, 403, { error: 'Cross-site request denied' });
         const expected = new Set([
             `127.0.0.1:${port}`,
             `localhost:${port}`,

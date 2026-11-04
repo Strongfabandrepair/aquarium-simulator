@@ -23,9 +23,9 @@ paths:
         '200':
           description: Committed collection with incremented revision
         '400':
-          description: Invalid JSON or collection
+          description: Invalid JSON or collection, nesting deeper than 64 levels, or prototype-related keys anywhere in the payload
         '403':
-          description: Cross-origin request or missing browser identity
+          description: Cross-origin or cross-site request, unexpected Host, or missing browser identity
         '409':
           description: Stale revision; no write performed
         '413':

@@ -43,6 +43,11 @@ test('SQLite survives restart, isolates browsers, validates writes and protects 
         const first = await fetch(`${url}/api/profiles`),
             cookie = first.headers.get('set-cookie').split(';')[0];
         assert.equal(first.status, 200);
+        assert.equal(first.headers.get('x-frame-options'), 'DENY');
+        assert.match(
+            first.headers.get('content-security-policy'),
+            /frame-ancestors 'none'/
+        );
         const initial = await first.json();
         assert.equal(initial.revision, 0);
         const snapshot = {
@@ -97,6 +102,31 @@ test('SQLite survives restart, isolates browsers, validates writes and protects 
         assert.equal((await fetch(`${url}/data/reefsim.sqlite`)).status, 404);
         assert.equal((await fetch(`${url}/.git/config`)).status, 404);
         assert.equal((await fetch(`${url}/server/index.js`)).status, 404);
+        assert.equal(
+            (
+                await put(
+                    { ...snapshot, revision: 1 },
+                    { 'sec-fetch-site': 'cross-site' }
+                )
+            ).status,
+            403
+        );
+        const poisoned = JSON.parse(
+            '{"revision":1,"active":"Reef","profiles":{"Reef":{"equipment":{"__proto__":{"heater":true}}}}}'
+        );
+        assert.equal((await put(poisoned)).status, 400);
+        let nested = {};
+        for (let i = 0; i < 70; i++) nested = { child: nested };
+        assert.equal(
+            (
+                await put({
+                    ...snapshot,
+                    revision: 1,
+                    profiles: { Reef: nested }
+                })
+            ).status,
+            400
+        );
         await stop();
         await start();
         const restored = await (

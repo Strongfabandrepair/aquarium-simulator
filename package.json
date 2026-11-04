@@ -8,18 +8,27 @@
     "lint": "eslint \"js/**/*.js\"",
     "format": "prettier --write \"js/**/*.js\"",
     "start": "node server/index.js",
-    "test:api": "node --test tests/persistence-api.node.js"
+    "test:api": "node --test tests/persistence-api.node.js",
+    "audit": "npm audit --audit-level=low"
   },
   "dependencies": {
     "three": "^0.128.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "esbuild": "^0.28.2",
-    "eslint": "^9.9.0",
+    "eslint": "^10.14.0",
     "playwright": "^1.62.1",
     "prettier": "^3.3.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
-  "engines": { "node": ">=22.13.0" },
-  "allowScripts": { "esbuild@0.28.2": true }
+  "overrides": {
+    "minimatch": "^11.0.1"
+  },
+  "engines": {
+    "node": "^22.13.0 || >=24"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
 }

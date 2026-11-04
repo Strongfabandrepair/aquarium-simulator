@@ -706,7 +706,7 @@ export class GameEngine {
         const percentage = Math.round((score / questions.length) * 100);
 
         // Calculate knowledge points to award
-        let knowledgeGain = 0;
+        let knowledgeGain;
         if (percentage >= 80) {
             knowledgeGain = 25; // Excellent
         } else if (percentage >= 60) {

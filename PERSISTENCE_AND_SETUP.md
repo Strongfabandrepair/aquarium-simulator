@@ -2,7 +2,7 @@
 
 ## Start ReefSim
 
-Use Node.js 22.13 or newer (verified with Node 26.4). Run `npm install`, `npm run build`, then `npm start`. Open **http://127.0.0.1:8766**. The Node server serves the app and stores profile snapshots in SQLite using Node's built-in SQLite support; no external database service is required.
+Use Node.js 22.13+ within the 22.x line, or 24+ (verified with Node 26.4). Run `npm install`, `npm run build`, then `npm start`. Open **http://127.0.0.1:8766**. The Node server serves the app and stores profile snapshots in SQLite using Node's built-in SQLite support; no external database service is required.
 
 The default database is `data/reefsim.sqlite`. Set `REEFSIM_DB` to an absolute path to keep it elsewhere, and `PORT` to change the listening port. Runtime databases and their WAL/SHM files are ignored by Git. To back up safely, stop the server and copy the database; do not copy only the main database while writes are active. For an online backup use a SQLite-aware backup mechanism.
 

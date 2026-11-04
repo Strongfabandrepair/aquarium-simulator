@@ -1,3 +1,4 @@
+import { escapeHTML } from './escapeHTML.js';
 // =========================================
 // UI CONTROLLER & DOM RENDERER
 // =========================================
@@ -375,7 +376,7 @@ export class UIController {
             <select id="foodType" aria-label="Food type">${['mixed', 'algae', 'meaty', 'plankton', 'copepods'].map((food) => `<option value="${food}" ${state.foodType === food ? 'selected' : ''}>${food}</option>`).join('')}</select>
             <button class="maint-btn" id="btnFeedFish">
                 🍽 Feed Livestock
-                <span class="maint-cooldown">Today: ${state.feedingsToday}× ${state.lastFed === state.day ? '✅' : ''}</span>
+                <span class="maint-cooldown">Today: ${escapeHTML(state.feedingsToday)}× ${state.lastFed === state.day ? '✅' : ''}</span>
             </button>
         `;
 
@@ -400,9 +401,9 @@ export class UIController {
     static renderRealCosts(state) {
         const html = `
             <div style="font-size:0.75rem;color:var(--text-secondary);line-height:1.6;">
-                <p><strong>Tank:</strong> ${state.tankGallons} Gallons</p>
-                <p><strong>Total Spent:</strong> $${state.totalSpent}</p>
-                <p><strong>Remaining Budget:</strong> $${state.budget}</p>
+                <p><strong>Tank:</strong> ${escapeHTML(state.tankGallons)} Gallons</p>
+                <p><strong>Total Spent:</strong> $${escapeHTML(state.totalSpent)}</p>
+                <p><strong>Remaining Budget:</strong> $${escapeHTML(state.budget)}</p>
             </div>
         `;
         this.updateHTML('realCostsPanel', html);
@@ -486,9 +487,9 @@ export class UIController {
             '<p class="store-item-desc">Observe where each animal swims, rests and feeds. Plan shelter, swimming room, diet and coral spacing before stocking. These animated behaviors illustrate habitat use; disease, aggression, food populations and coral stinging are not fully simulated.</p><div class="store-category">🐠 Fish Store</div>';
         FISH_DATABASE.forEach((fish) => {
             html += `
-            <div class="store-item" data-action="buy-fish" data-id="${fish.id}">
+            <div class="store-item" data-action="buy-fish" data-id="${escapeHTML(fish.id)}">
                 <div class="store-item-top">
-                    <div class="store-item-name">${fish.icon} ${fish.name}</div>
+                    <div class="store-item-name">${escapeHTML(fish.icon)} ${escapeHTML(fish.name)}</div>
                     <div class="store-item-price">$${fish.price}</div>
                 </div>
                 <div class="store-item-desc">${fish.desc}</div>
@@ -508,11 +509,11 @@ export class UIController {
                 html += `
                 <div class="livestock-item">
                     <div class="livestock-header">
-                        <span class="livestock-name">${fish.icon} ${fish.name}</span>
+                        <span class="livestock-name">${escapeHTML(fish.icon)} ${escapeHTML(fish.name)}</span>
                         <span class="livestock-health" style="color:${color}">${Math.round(fish.health)}%</span>
                     </div>
                     <div class="store-item-desc">${((fish.lengthM || getSpecies(fish.templateId).juvenileLengthM) * 100).toFixed(1)} cm · ${fish.growthProgress >= 0.95 ? 'Adult' : 'Growing'} · Diet: ${getSpecies(fish.templateId).diet}</div>
-                    ${fish.alive === false ? `<button data-remove-kind="fish" data-id="${fish.id}">Remove remains</button>` : ''}
+                    ${fish.alive === false ? `<button data-remove-kind="fish" data-id="${escapeHTML(fish.id)}">Remove remains</button>` : ''}
                 </div>`;
             });
         }
@@ -521,9 +522,9 @@ export class UIController {
             '<div class="store-category" style="margin-top:20px;">🪸 Corals (Requires Cycled Tank + Light)</div>';
         CORAL_DATABASE.forEach((coral) => {
             html += `
-            <div class="store-item" data-action="buy-coral" data-id="${coral.id}">
+            <div class="store-item" data-action="buy-coral" data-id="${escapeHTML(coral.id)}">
                 <div class="store-item-top">
-                    <div class="store-item-name">${coral.icon} ${coral.name}</div>
+                    <div class="store-item-name">${escapeHTML(coral.icon)} ${escapeHTML(coral.name)}</div>
                     <div class="store-item-price">$${coral.price}</div>
                 </div>
                 <div class="store-item-desc">${coral.desc}</div>
@@ -543,11 +544,11 @@ export class UIController {
                 html += `
                 <div class="livestock-item">
                     <div class="livestock-header">
-                        <span class="livestock-name">${coral.icon} ${coral.name}</span>
+                        <span class="livestock-name">${escapeHTML(coral.icon)} ${escapeHTML(coral.name)}</span>
                         <span class="livestock-health" style="color:${color}">${Math.round(coral.health)}%</span>
                     </div>
                     <div class="store-item-desc">${((coral.diameterM || getSpecies(coral.templateId).juvenileLengthM) * 100).toFixed(1)} cm colony · ${coral.growthProgress >= 0.95 ? 'Mature' : 'Growing'}${coral.placementStatus === 'needs-placement' ? ' · Needs space: use Place / move frag' : ''}</div>
-                    ${coral.alive === false || coral.health <= 0 ? `<button data-remove-kind="coral" data-id="${coral.id}">Remove remains</button>` : `<button data-place-coral="${coral.id}">Place / move frag</button>`}
+                    ${coral.alive === false || coral.health <= 0 ? `<button data-remove-kind="coral" data-id="${escapeHTML(coral.id)}">Remove remains</button>` : `<button data-place-coral="${escapeHTML(coral.id)}">Place / move frag</button>`}
                 </div>`;
             });
         }
@@ -562,16 +563,16 @@ export class UIController {
                         c.health !== 0
                 )
                 .reduce((count, c) => count + c.count, 0);
-            html += `<div class="store-item" data-action="buy-cleanup" data-id="${crew.id}">
-                <div class="store-item-top"><div class="store-item-name">${crew.icon} ${crew.name}</div>
+            html += `<div class="store-item" data-action="buy-cleanup" data-id="${escapeHTML(crew.id)}">
+                <div class="store-item-top"><div class="store-item-name">${crew.icon} ${escapeHTML(crew.name)}</div>
                 <div class="store-item-price">$${crew.price}</div></div>
                 <div class="store-item-desc">${crew.desc}</div>
                 <div class="store-item-desc"><strong>Care:</strong> ${crew.care}</div>
-                <div class="store-item-desc">Pack: ${crew.count} · In tank: ${owned}</div></div>`;
+                <div class="store-item-desc">Pack: ${crew.count} · In tank: ${escapeHTML(owned)}</div></div>`;
         }
         for (const crew of state.cleanupCrew || []) {
             if (crew.alive === false || crew.health <= 0)
-                html += `<div class="livestock-item">${crew.name}: remains <button data-remove-kind="cleanup" data-id="${crew.id}">Remove remains</button></div>`;
+                html += `<div class="livestock-item">${escapeHTML(crew.name)}: remains <button data-remove-kind="cleanup" data-id="${escapeHTML(crew.id)}">Remove remains</button></div>`;
         }
         this.updateHTML('tab-livestock', html);
     }
@@ -584,9 +585,9 @@ export class UIController {
             .forEach((entry) => {
                 html += `
             <div class="journal-entry">
-                <div class="journal-time">${entry.time}</div>
-                <div class="journal-text">${entry.text}</div>
-                ${entry.tip ? `<div class="journal-tip">💡 ${entry.tip}</div>` : ''}
+                <div class="journal-time">${escapeHTML(entry.time)}</div>
+                <div class="journal-text">${escapeHTML(entry.text)}</div>
+                ${entry.tip ? `<div class="journal-tip">💡 ${escapeHTML(entry.tip)}</div>` : ''}
             </div>`;
             });
         this.updateHTML(
@@ -600,7 +601,10 @@ export class UIController {
         let html = '';
         Object.keys(KNOWLEDGE_BASE).forEach((key) => {
             const kb = KNOWLEDGE_BASE[key];
-            const pct = state.knowledge[key] || 0;
+            const raw = Number(state.knowledge[key]);
+            const pct = Number.isFinite(raw)
+                ? Math.max(0, Math.min(100, raw))
+                : 0;
             let content = `
                 <div class="topic-title">${kb.title}</div>
                 <div class="topic-progress">

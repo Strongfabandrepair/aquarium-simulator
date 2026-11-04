@@ -1,44 +1,58 @@
-November 3, 2026: [PERSISTENCE_AND_SETUP.md](PERSISTENCE_AND_SETUP.md) covers SQLite-backed profiles, individual decor sizing and global OmniRoute separation.
+# ReefSim
 
-November 3, 2026 expansion: see [DECOR_AND_SPECIES.md](DECOR_AND_SPECIES.md) for purchasable decor/backgrounds, the 37-entry species catalog, anemone hosting and visible bounded growth.
+ReefSim is a procedural 3D saltwater aquarium learning simulator. Plan a tank, buy equipment and animals, practice cycling and maintenance, arrange an aquascape, and observe simulated feeding, movement, growth and mortality.
 
-November 3, 2026: [PHYSICAL_SIMULATION.md](PHYSICAL_SIMULATION.md) documents the current meter-scale tank generator, raycast aquascape editor, 33-species catalog, feeding/growth/mortality systems and verification. Earlier entries below describe previous versions.
+The browser runs JavaScript/Three.js; a local Node server serves the app and saves named profiles in SQLite. Static hosting also works with browser-local saving only.
 
-Current habitat and behavior update: see [HABITAT_GUIDE.md](HABITAT_GUIDE.md) for continuous swimming, supported coral placement, cleanup anatomy/foraging, species-care guidance, references and simulation limits. [SMOKE_TEST_REPORT.md](SMOKE_TEST_REPORT.md) records verification. Earlier plans and session entries below are historical.
+## Start locally
 
-See [SMOKE_TEST_REPORT.md](SMOKE_TEST_REPORT.md) for the November 2 full-flow smoke tests and resulting reliability fixes.
+Use Node.js **22.13+ within the 22.x line, or 24+**, npm, and a WebGL-capable browser.
 
-<!-- Wildlife rendering update: 2026-11-02 -->
+```sh
+npm ci
+npm run build
+npm start
+```
 
-See [WILDLIFE.md](WILDLIFE.md) for the current 26-species models, procedural textures, movement system, cleanup-crew integration, rendering budgets, reference sources, and visual regression workflow. This supersedes older livestock-rendering descriptions below.
+Open **http://127.0.0.1:8766**. Keep the same browser profile/address to recover the same saved collection. The database defaults to `data/reefsim.sqlite` and is created automatically. The server binds to loopback; it is not a public multi-user service.
 
-# ReefSim (Aquarium Simulator)
+## Features
 
-Procedural 3D saltwater aquarium learning simulator built with Three.js and modular ES6 architecture.
+- Rectangular, cube, cylinder and bow-front tanks with meter-scale models and shared boundaries.
+- **37 catalog entries:** 15 fish, 13 coral/anemone entries and nine cleanup companions.
+- Species-specific movement and feeding, bounded visible growth, mortality/remains removal, and clownfish association with living placed anemones.
+- Six repeatable rock/decor purchases, three backgrounds, surface placement, rotation snapping and per-item decor sizing.
+- Chemistry, nitrogen cycling, equipment, maintenance, lessons, quizzes and a journal.
+- Named profiles, local recovery copies, SQLite persistence, revision conflicts and save-status feedback.
 
-## Local development
+Growth, compatibility and chemistry are educational approximations. A successful simulation does not guarantee a safe real aquarium stocking plan.
 
-Install dependencies:
+## Documentation
 
-- `npm install`
+Start with the [documentation index](docs/README.md).
 
-Bundle the app:
+| Guide | Purpose |
+| --- | --- |
+| [User guide](docs/user-guide.md) | First tank, daily actions, aquascaping and troubleshooting |
+| [Architecture](docs/architecture.md) | Modules, simulation/rendering flow, physical units and state |
+| [Development](docs/development.md) | Setup, tests, extending species/decor and dependency workflow |
+| [Operations](docs/operations.md) | Configuration, database backup/restore and deployment limits |
+| [Contributing](CONTRIBUTING.md) | Review workflow and evidence |
+| [Security](SECURITY.md) | Security boundary, reporting and findings |
+| [Verification](SMOKE_TEST_REPORT.md) | Dated integrated results and limitations |
+| [API contract](server/openapi.yaml) | Local persistence payloads |
 
-- `npm run build`
+`SESSION.md`, `REVIEW_NOTES.md` and older `PERFORMANCE_PLAN.md` entries retain project history; they are not current setup instructions.
 
-Start the local application and SQLite profile store (Node.js 22.13+):
+## Verify changes
 
-- `npm start`
-- Open `http://127.0.0.1:8766`
+```sh
+npm run build
+npm run lint
+npm test
+npm run test:api
+npx playwright install chromium
+npm run test:ui -- --workers=2
+```
 
-See [PERSISTENCE_AND_SETUP.md](PERSISTENCE_AND_SETUP.md) for database location/backups, browser identity, per-item sizing and the separate global OmniRoute installation. Static hosting supports local-only saves.
-
-## Quality checks
-
-- Unit tests: `npm test`
-- Persistence API/restart tests: `npm run test:api`
-- Browser tests: `npx playwright install chromium`, then `npm run test:ui` (starts the Node server)
-- Build: `npm run build`
-- Watch tests: `npm run test:watch`
-- Lint: `npm run lint`
-- Format: `npm run format`
+Read the development guide before testing against an existing server/database. Reports/screenshots are local artifacts excluded from Git. OmniRoute is optional external tooling, not a ReefSim dependency. No project license grant is declared in this repository; dependencies retain their own licenses.

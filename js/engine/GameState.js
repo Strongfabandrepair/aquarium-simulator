@@ -216,6 +216,11 @@ export class GameState {
 
     loadFromSnapshot(snapshot) {
         if (!snapshot) return;
+        snapshot = JSON.parse(JSON.stringify(snapshot), (key, value) =>
+            ['__proto__', 'constructor', 'prototype'].includes(key)
+                ? undefined
+                : value
+        );
         const base = JSON.parse(JSON.stringify(DEFAULT_GAME_STATE));
         this.data = Object.assign({}, base, snapshot);
         // Ensure sub-objects exist

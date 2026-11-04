@@ -598,6 +598,10 @@
     }
     loadFromSnapshot(snapshot) {
       if (!snapshot) return;
+      snapshot = JSON.parse(
+        JSON.stringify(snapshot),
+        (key2, value) => ["__proto__", "constructor", "prototype"].includes(key2) ? void 0 : value
+      );
       const base = JSON.parse(JSON.stringify(DEFAULT_GAME_STATE));
       this.data = Object.assign({}, base, snapshot);
       this.data.water = Object.assign(base.water, snapshot.water || {});
@@ -36940,6 +36944,20 @@ void main() {
     }
   };
 
+  // js/ui/escapeHTML.js
+  function escapeHTML(value) {
+    return String(value ?? "").replace(
+      /[&<>"']/g,
+      (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      })[character]
+    );
+  }
+
   // js/ui/SparklineManager.js
   var SparklineManager = {
     history: {},
@@ -37290,7 +37308,7 @@ void main() {
             <select id="foodType" aria-label="Food type">${["mixed", "algae", "meaty", "plankton", "copepods"].map((food) => `<option value="${food}" ${state.foodType === food ? "selected" : ""}>${food}</option>`).join("")}</select>
             <button class="maint-btn" id="btnFeedFish">
                 \u{1F37D} Feed Livestock
-                <span class="maint-cooldown">Today: ${state.feedingsToday}\xD7 ${state.lastFed === state.day ? "\u2705" : ""}</span>
+                <span class="maint-cooldown">Today: ${escapeHTML(state.feedingsToday)}\xD7 ${state.lastFed === state.day ? "\u2705" : ""}</span>
             </button>
         `;
       if (!state.cycleComplete && (state.cycleDay > 0 || state.equipment.tank && state.water.salinity >= 34 && state.equipment.liveRock > 0)) {
@@ -37306,9 +37324,9 @@ void main() {
     static renderRealCosts(state) {
       const html = `
             <div style="font-size:0.75rem;color:var(--text-secondary);line-height:1.6;">
-                <p><strong>Tank:</strong> ${state.tankGallons} Gallons</p>
-                <p><strong>Total Spent:</strong> $${state.totalSpent}</p>
-                <p><strong>Remaining Budget:</strong> $${state.budget}</p>
+                <p><strong>Tank:</strong> ${escapeHTML(state.tankGallons)} Gallons</p>
+                <p><strong>Total Spent:</strong> $${escapeHTML(state.totalSpent)}</p>
+                <p><strong>Remaining Budget:</strong> $${escapeHTML(state.budget)}</p>
             </div>
         `;
       this.updateHTML("realCostsPanel", html);
@@ -37344,9 +37362,9 @@ void main() {
       let html = '<p class="store-item-desc">Observe where each animal swims, rests and feeds. Plan shelter, swimming room, diet and coral spacing before stocking. These animated behaviors illustrate habitat use; disease, aggression, food populations and coral stinging are not fully simulated.</p><div class="store-category">\u{1F420} Fish Store</div>';
       FISH_DATABASE.forEach((fish2) => {
         html += `
-            <div class="store-item" data-action="buy-fish" data-id="${fish2.id}">
+            <div class="store-item" data-action="buy-fish" data-id="${escapeHTML(fish2.id)}">
                 <div class="store-item-top">
-                    <div class="store-item-name">${fish2.icon} ${fish2.name}</div>
+                    <div class="store-item-name">${escapeHTML(fish2.icon)} ${escapeHTML(fish2.name)}</div>
                     <div class="store-item-price">$${fish2.price}</div>
                 </div>
                 <div class="store-item-desc">${fish2.desc}</div>
@@ -37360,20 +37378,20 @@ void main() {
           html += `
                 <div class="livestock-item">
                     <div class="livestock-header">
-                        <span class="livestock-name">${fish2.icon} ${fish2.name}</span>
+                        <span class="livestock-name">${escapeHTML(fish2.icon)} ${escapeHTML(fish2.name)}</span>
                         <span class="livestock-health" style="color:${color}">${Math.round(fish2.health)}%</span>
                     </div>
                     <div class="store-item-desc">${((fish2.lengthM || getSpecies(fish2.templateId).juvenileLengthM) * 100).toFixed(1)} cm \xB7 ${fish2.growthProgress >= 0.95 ? "Adult" : "Growing"} \xB7 Diet: ${getSpecies(fish2.templateId).diet}</div>
-                    ${fish2.alive === false ? `<button data-remove-kind="fish" data-id="${fish2.id}">Remove remains</button>` : ""}
+                    ${fish2.alive === false ? `<button data-remove-kind="fish" data-id="${escapeHTML(fish2.id)}">Remove remains</button>` : ""}
                 </div>`;
         });
       }
       html += '<div class="store-category" style="margin-top:20px;">\u{1FAB8} Corals (Requires Cycled Tank + Light)</div>';
       CORAL_DATABASE.forEach((coral) => {
         html += `
-            <div class="store-item" data-action="buy-coral" data-id="${coral.id}">
+            <div class="store-item" data-action="buy-coral" data-id="${escapeHTML(coral.id)}">
                 <div class="store-item-top">
-                    <div class="store-item-name">${coral.icon} ${coral.name}</div>
+                    <div class="store-item-name">${escapeHTML(coral.icon)} ${escapeHTML(coral.name)}</div>
                     <div class="store-item-price">$${coral.price}</div>
                 </div>
                 <div class="store-item-desc">${coral.desc}</div>
@@ -37387,11 +37405,11 @@ void main() {
           html += `
                 <div class="livestock-item">
                     <div class="livestock-header">
-                        <span class="livestock-name">${coral.icon} ${coral.name}</span>
+                        <span class="livestock-name">${escapeHTML(coral.icon)} ${escapeHTML(coral.name)}</span>
                         <span class="livestock-health" style="color:${color}">${Math.round(coral.health)}%</span>
                     </div>
                     <div class="store-item-desc">${((coral.diameterM || getSpecies(coral.templateId).juvenileLengthM) * 100).toFixed(1)} cm colony \xB7 ${coral.growthProgress >= 0.95 ? "Mature" : "Growing"}${coral.placementStatus === "needs-placement" ? " \xB7 Needs space: use Place / move frag" : ""}</div>
-                    ${coral.alive === false || coral.health <= 0 ? `<button data-remove-kind="coral" data-id="${coral.id}">Remove remains</button>` : `<button data-place-coral="${coral.id}">Place / move frag</button>`}
+                    ${coral.alive === false || coral.health <= 0 ? `<button data-remove-kind="coral" data-id="${escapeHTML(coral.id)}">Remove remains</button>` : `<button data-place-coral="${escapeHTML(coral.id)}">Place / move frag</button>`}
                 </div>`;
         });
       }
@@ -37400,16 +37418,16 @@ void main() {
         const owned = (state.cleanupCrew || []).filter(
           (c) => c.templateId === crew.id && c.alive !== false && c.health !== 0
         ).reduce((count, c) => count + c.count, 0);
-        html += `<div class="store-item" data-action="buy-cleanup" data-id="${crew.id}">
-                <div class="store-item-top"><div class="store-item-name">${crew.icon} ${crew.name}</div>
+        html += `<div class="store-item" data-action="buy-cleanup" data-id="${escapeHTML(crew.id)}">
+                <div class="store-item-top"><div class="store-item-name">${crew.icon} ${escapeHTML(crew.name)}</div>
                 <div class="store-item-price">$${crew.price}</div></div>
                 <div class="store-item-desc">${crew.desc}</div>
                 <div class="store-item-desc"><strong>Care:</strong> ${crew.care}</div>
-                <div class="store-item-desc">Pack: ${crew.count} \xB7 In tank: ${owned}</div></div>`;
+                <div class="store-item-desc">Pack: ${crew.count} \xB7 In tank: ${escapeHTML(owned)}</div></div>`;
       }
       for (const crew of state.cleanupCrew || []) {
         if (crew.alive === false || crew.health <= 0)
-          html += `<div class="livestock-item">${crew.name}: remains <button data-remove-kind="cleanup" data-id="${crew.id}">Remove remains</button></div>`;
+          html += `<div class="livestock-item">${escapeHTML(crew.name)}: remains <button data-remove-kind="cleanup" data-id="${escapeHTML(crew.id)}">Remove remains</button></div>`;
       }
       this.updateHTML("tab-livestock", html);
     }
@@ -37418,9 +37436,9 @@ void main() {
       [...state.journal].reverse().slice(0, 40).forEach((entry) => {
         html += `
             <div class="journal-entry">
-                <div class="journal-time">${entry.time}</div>
-                <div class="journal-text">${entry.text}</div>
-                ${entry.tip ? `<div class="journal-tip">\u{1F4A1} ${entry.tip}</div>` : ""}
+                <div class="journal-time">${escapeHTML(entry.time)}</div>
+                <div class="journal-text">${escapeHTML(entry.text)}</div>
+                ${entry.tip ? `<div class="journal-tip">\u{1F4A1} ${escapeHTML(entry.tip)}</div>` : ""}
             </div>`;
       });
       this.updateHTML(
@@ -37432,7 +37450,8 @@ void main() {
       let html = "";
       Object.keys(KNOWLEDGE_BASE).forEach((key2) => {
         const kb = KNOWLEDGE_BASE[key2];
-        const pct = state.knowledge[key2] || 0;
+        const raw = Number(state.knowledge[key2]);
+        const pct = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0;
         let content = `
                 <div class="topic-title">${kb.title}</div>
                 <div class="topic-progress">
@@ -38072,7 +38091,7 @@ void main() {
     finishQuiz() {
       const { key: key2, questions, score } = this.currentQuiz;
       const percentage = Math.round(score / questions.length * 100);
-      let knowledgeGain = 0;
+      let knowledgeGain;
       if (percentage >= 80) {
         knowledgeGain = 25;
       } else if (percentage >= 60) {
@@ -38180,7 +38199,7 @@ void main() {
   };
 
   // js/main.js
-  var escapeHTML = (value) => String(value).replace(
+  var escapeHTML2 = (value) => String(value).replace(
     /[&<>"']/g,
     (c) => ({
       "&": "&amp;",
@@ -38205,7 +38224,7 @@ void main() {
       if (modalTitle) modalTitle.textContent = "Profiles";
       if (modalBody) {
         const items = names.length > 0 ? names.map(
-          (name) => `<button class="maint-btn" style="width:100%;margin-bottom:8px;" data-profile="${escapeHTML(name)}">${escapeHTML(name)}${name === active ? " (active)" : ""}</button>`
+          (name) => `<button class="maint-btn" style="width:100%;margin-bottom:8px;" data-profile="${escapeHTML2(name)}">${escapeHTML2(name)}${name === active ? " (active)" : ""}</button>`
         ).join("") : '<div style="color:var(--text-secondary)">No saved profiles yet.</div>';
         const newProfileHtml = `
                 <div style="display:flex;gap:8px;margin-top:16px;">
@@ -38293,7 +38312,7 @@ void main() {
       if (modalTitle) modalTitle.textContent = "Test Water";
       if (modalBody) {
         modalBody.innerHTML = engine.state.equipment.testKit ? "<p>Current water measurements</p>" + Object.entries(engine.state.water).map(
-          ([key2, value]) => `<p><strong>${PARAM_LABELS[key2] || key2}</strong>: ${Number(value).toFixed(2)} ${WATER_IDEAL[key2]?.unit || ""}</p>`
+          ([key2, value]) => `<p><strong>${escapeHTML2(PARAM_LABELS[key2] || key2)}</strong>: ${Number(value).toFixed(2)} ${WATER_IDEAL[key2]?.unit || ""}</p>`
         ).join("") : "<p>Purchase a Test Kit from the equipment store to measure your water.</p>";
       }
       if (modalActions) {
